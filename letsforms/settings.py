@@ -20,6 +20,13 @@ SECRET_KEY = 'django-insecure-aexm2ar8y4hfn2la1x8-(ou%%5e41oqy=l^ip_n**gqj#+96@i
 DEBUG = True
 
 ALLOWED_HOSTS = ['*']
+ALLOWED_REDIRECT_DOMAINS = ['*']
+DEFAULT_REDIRECT_PATH = 'y354el-77-35-211-67.ru.tuna.am/'
+
+SESSION_COOKIE_DOMAIN = '.y354el-77-35-211-67.ru.tuna.am' 
+CSRF_COOKIE_DOMAIN = '.y354el-77-35-211-67.ru.tuna.am'
+SESSION_COOKIE_SAMESITE = 'Lax'
+CSRF_COOKIE_SAMESITE = 'Lax'
 
 
 # Application definition
