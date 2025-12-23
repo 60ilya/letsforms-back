@@ -4,4 +4,7 @@ djangorestframework
 django-cors-headers
 django_user_agents
 drf-yasg
+djangorestframework-simplejwt
+python-telegram-bot
+cryptography
 python-dotenv

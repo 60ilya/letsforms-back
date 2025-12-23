@@ -74,14 +74,14 @@ class FormSerializer(serializers.ModelSerializer):
         return super().update(instance, validated_data)
 
 class QuestionSerializer(serializers.ModelSerializer):
-    form_hash = serializers.CharField(source='form.hash', read_only=True)  # Используем hash вместо form_id
+    form_hash = serializers.CharField(source='form.hash', read_only=True)
     
     class Meta:
         model = Question
         fields = ['id', 'form', 'form_hash', 'type', 'text', 'options', 'is_required', 'order']
         read_only_fields = ['id', 'form_hash']
         extra_kwargs = {
-            'form': {'write_only': True}  # form только для записи
+            'form': {'required': False, 'write_only': True} 
         }
 
 class FormDetailSerializer(serializers.ModelSerializer):
@@ -177,10 +177,12 @@ class SubmitFormSerializer(serializers.Serializer):
 
 class BulkQuestionSerializer(serializers.Serializer):
     """Сериализатор для массового добавления вопросов"""
+    tg_id = serializers.IntegerField(required=True)
     questions = serializers.ListField(
         child=serializers.DictField(),
         required=True,
-        min_length=1
+        min_length=1,
+        help_text="Массив вопросов"
     )
     
     def validate_questions(self, questions):
@@ -188,12 +190,18 @@ class BulkQuestionSerializer(serializers.Serializer):
         validated_questions = []
         
         for i, question_data in enumerate(questions):
-            serializer = QuestionSerializer(data=question_data)
-            if not serializer.is_valid():
-                errors = serializer.errors
+            # Создаем временный сериализатор без проверки поля form
+            temp_serializer = QuestionSerializer(data=question_data)
+            
+            # Временно убираем form из обязательных полей
+            temp_serializer.fields['form'].required = False
+            
+            if not temp_serializer.is_valid():
+                errors = temp_serializer.errors
                 errors['question_number'] = i + 1
                 raise serializers.ValidationError(errors)
-            validated_questions.append(serializer.validated_data)
+            
+            validated_questions.append(temp_serializer.validated_data)
         
         return validated_questions
 

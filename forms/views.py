@@ -733,7 +733,7 @@ class FormViewSet(viewsets.ModelViewSet):
             with transaction.atomic():
                 created_questions = []
                 for question_data in serializer.validated_data['questions']:
-                    # Устанавливаем форму для вопроса
+                    # Устанавливаем форму для вопроса (важный момент!)
                     question_data['form'] = form
                     question = Question.objects.create(**question_data)
                     created_questions.append(question)
