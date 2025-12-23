@@ -1,14 +1,14 @@
-# telegram_auth/services.py
 import hashlib
 import hmac
 import json
 import time
 from urllib.parse import parse_qs, unquote
 from django.conf import settings
-from django.contrib.auth import get_user_model
+from django.contrib.auth.models import User
 from rest_framework_simplejwt.tokens import RefreshToken
+from django.utils import timezone
 
-User = get_user_model()
+from .models import TelegramUserProfile
 
 
 class TelegramAuthService:
@@ -80,10 +80,14 @@ class TelegramAuthService:
             if value and len(value) == 1:
                 result[key] = unquote(value[0])
         
-        # Парсим JSON поле user если оно есть
         if 'user' in result:
             try:
-                result['user'] = json.loads(result['user'])
+                user_data = json.loads(result['user'])
+                # Распаковываем пользовательские данные в корневой словарь
+                if isinstance(user_data, dict):
+                    for user_key, user_value in user_data.items():
+                        result[user_key] = user_value
+                result.pop('user', None)
             except json.JSONDecodeError:
                 pass
         
@@ -93,57 +97,58 @@ class TelegramAuthService:
     def get_or_create_user(telegram_data: dict):
         """
         Получает или создает пользователя на основе данных Telegram
+        Работает со стандартной моделью User и профилем TelegramUserProfile
         """
-        # Извлекаем user данные
-        user_data = telegram_data.get('user') or {}
-        
-        # Если user в JSON формате, распаковываем
-        if isinstance(user_data, str):
-            try:
-                user_data = json.loads(user_data)
-            except json.JSONDecodeError:
-                user_data = {'id': user_data}
-        
-        # Объединяем все данные
-        if isinstance(user_data, dict):
-            merged_data = {**telegram_data, **user_data}
-        else:
-            merged_data = telegram_data.copy()
-            merged_data['id'] = user_data
-        
-        # Получаем telegram_id
-        telegram_id = merged_data.get('id')
+        # Извлекаем основные данные
+        telegram_id = telegram_data.get('id')
         if not telegram_id:
             raise ValueError("Telegram ID не найден в данных")
         
-        # Ищем пользователя по telegram_id
+        # Ищем Telegram профиль
         try:
-            user = User.objects.get(telegram_id=telegram_id)
+            profile = TelegramUserProfile.objects.get(telegram_id=telegram_id)
+            user = profile.user
             is_new = False
             
-            # Обновляем данные
-            user.telegram_username = merged_data.get('username', user.telegram_username)
-            user.telegram_first_name = merged_data.get('first_name', user.telegram_first_name)
-            user.telegram_last_name = merged_data.get('last_name', user.telegram_last_name)
-            user.telegram_photo_url = merged_data.get('photo_url', user.telegram_photo_url)
-            user.telegram_data = merged_data
+            # Обновляем профиль
+            profile.telegram_username = telegram_data.get('username', profile.telegram_username)
+            profile.telegram_first_name = telegram_data.get('first_name', profile.telegram_first_name)
+            profile.telegram_last_name = telegram_data.get('last_name', profile.telegram_last_name)
+            profile.telegram_photo_url = telegram_data.get('photo_url', profile.telegram_photo_url)
+            profile.telegram_data = telegram_data
+            profile.telegram_auth_date = timezone.now()
+            profile.save()
+            
+            # Обновляем данные User
+            user.first_name = telegram_data.get('first_name', user.first_name)
+            user.last_name = telegram_data.get('last_name', user.last_name)
             user.save()
             
-        except User.DoesNotExist:
-            # Создаем нового пользователя
-            username = merged_data.get('username', f"tg_{telegram_id}")
+        except TelegramUserProfile.DoesNotExist:
+            # Создаем Django пользователя
+            username = telegram_data.get('username', f"tg_{telegram_id}")
             
-            user = User.objects.create(
+            # Проверяем не существует ли уже пользователь с таким username
+            try:
+                user = User.objects.get(username=username)
+            except User.DoesNotExist:
+                user = User.objects.create_user(
+                    username=username,
+                    first_name=telegram_data.get('first_name', ''),
+                    last_name=telegram_data.get('last_name', ''),
+                    is_active=True
+                )
+            
+            # Создаем Telegram профиль
+            profile = TelegramUserProfile.objects.create(
+                user=user,
                 telegram_id=telegram_id,
-                telegram_username=merged_data.get('username'),
-                telegram_first_name=merged_data.get('first_name', ''),
-                telegram_last_name=merged_data.get('last_name', ''),
-                telegram_photo_url=merged_data.get('photo_url'),
-                telegram_data=merged_data,
-                username=username,
-                first_name=merged_data.get('first_name', ''),
-                last_name=merged_data.get('last_name', ''),
-                is_active=True,
+                telegram_username=telegram_data.get('username'),
+                telegram_first_name=telegram_data.get('first_name', ''),
+                telegram_last_name=telegram_data.get('last_name', ''),
+                telegram_photo_url=telegram_data.get('photo_url'),
+                telegram_auth_date=timezone.now(),
+                telegram_data=telegram_data
             )
             is_new = True
         

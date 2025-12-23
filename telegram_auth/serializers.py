@@ -1,7 +1,8 @@
-# telegram_auth/serializers.py
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+from django.contrib.auth.models import User
 from .services import TelegramAuthService
+from .models import TelegramUserProfile
 
 User = get_user_model()
 
@@ -44,16 +45,26 @@ class RefreshTokenSerializer(serializers.Serializer):
 
 
 class UserProfileSerializer(serializers.ModelSerializer):
-    """Сериализатор для профиля пользователя"""
+    """Сериализатор для профиля пользователя с Telegram данными"""
+    telegram_id = serializers.IntegerField(source='telegram_profile.telegram_id')
+    telegram_username = serializers.CharField(source='telegram_profile.telegram_username')
+    telegram_first_name = serializers.CharField(source='telegram_profile.telegram_first_name')
+    telegram_last_name = serializers.CharField(source='telegram_profile.telegram_last_name')
+    telegram_photo_url = serializers.URLField(source='telegram_profile.telegram_photo_url')
+    
     class Meta:
         model = User
         fields = [
             'id',
+            'username',
+            'first_name',
+            'last_name',
+            'email',
+            'date_joined',
+            'last_login',
             'telegram_id',
             'telegram_username',
             'telegram_first_name',
             'telegram_last_name',
             'telegram_photo_url',
-            'date_joined',
-            'last_login',
         ]
