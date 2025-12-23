@@ -1,203 +1,196 @@
-# telegram_auth/views.py
+"""
+Новые views для прямой работы с Telegram Web App
+"""
+import logging
 from rest_framework import status, permissions
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework_simplejwt.views import TokenRefreshView
 from django.http import JsonResponse
-from django.conf import settings
-from urllib.parse import urlparse
-import os
-import json
-import logging
+import time
 
 from .serializers import (
     TelegramAuthSerializer,
     RefreshTokenSerializer,
-    UserProfileSerializer
+    UserProfileSerializer,
+    AuthStatusSerializer
 )
 from .services import TelegramAuthService
+from .utils.telegram import validate_telegram_request
 
 logger = logging.getLogger(__name__)
 
 
-class TelegramLoginView(APIView):
+class TelegramLoginAPIView(APIView):
     """
-    Вход/регистрация через Telegram (возвращает JSON, без редиректа)
+    API endpoint для авторизации через Telegram Web App.
+    Фронтенд получает данные от Telegram и отправляет их напрямую сюда.
     """
     permission_classes = [permissions.AllowAny]
     
-    def get(self, request):
-        """
-        Обработка GET запроса
-        """
-        # Преобразуем QueryDict в словарь
-        data = {}
-        for key in request.GET:
-            values = request.GET.getlist(key)
-            data[key] = values[0] if len(values) == 1 else values
-        
-        return self._process_auth(request, data)
-    
     def post(self, request):
         """
-        Обработка POST запроса
+        Обработка POST запроса с данными от Telegram Web App
         """
-        data = request.data
+        logger.info("=" * 60)
+        logger.info("📱 НОВЫЙ ЗАПРОС АВТОРИЗАЦИИ ЧЕРЕЗ TELEGRAM WEB APP")
+        logger.info(f"Метод: {request.method}")
+        logger.info(f"Content-Type: {request.content_type}")
+        logger.info(f"IP: {request.META.get('REMOTE_ADDR')}")
+        logger.info(f"User-Agent: {request.META.get('HTTP_USER_AGENT', 'Не указан')}")
         
-        if isinstance(data, list):
-            data = data[0] if len(data) > 0 else {}
+        # 1. Валидация запроса
+        validation_result = validate_telegram_request(request)
+        if not validation_result['valid']:
+            logger.error(f"❌ Ошибка валидации запроса: {validation_result['error']}")
+            return Response({
+                'success': False,
+                'error': 'invalid_request',
+                'message': validation_result['error'],
+                'help': 'Отправьте JSON с полями id, auth_date, hash, полученными от Telegram Web App'
+            }, status=status.HTTP_400_BAD_REQUEST)
         
-        return self._process_auth(request, data)
-    
-    def _process_auth(self, request, data):
-        """
-        Общая логика аутентификации (возвращает JSON)
-        """
-        logger.info(f"Начало авторизации. Метод: {request.method}")
+        telegram_data = validation_result['data']
+        logger.info(f"✅ Данные Telegram валидированы. User ID: {telegram_data['id']}")
         
-        # Валидируем данные
-        serializer = TelegramAuthSerializer(data=data)
+        # 2. Сериализация и дополнительная валидация
+        serializer = TelegramAuthSerializer(data=telegram_data)
         if not serializer.is_valid():
-            logger.error(f"Ошибка валидации: {serializer.errors}")
-            return Response(
-                {
-                    'success': False,
-                    'error': 'invalid_data',
-                    'message': 'Неверные данные авторизации',
-                    'details': serializer.errors
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            logger.error(f"❌ Ошибка сериализации: {serializer.errors}")
+            return Response({
+                'success': False,
+                'error': 'validation_error',
+                'message': 'Ошибка валидации данных',
+                'details': serializer.errors,
+                'received_data': telegram_data
+            }, status=status.HTTP_400_BAD_REQUEST)
         
         validated_data = serializer.validated_data
+        user_id = validated_data['id']
+        logger.info(f"✅ Сериализация успешна. Проверяем подпись для пользователя {user_id}...")
         
-        # Проверяем подпись Telegram
+        # 3. Проверка подписи Telegram
         try:
-            if not TelegramAuthService.validate_telegram_data(validated_data):
-                logger.error("Неверная подпись Telegram данных")
-                return Response(
-                    {
-                        'success': False,
-                        'error': 'invalid_signature',
-                        'message': 'Неверная подпись Telegram данных'
-                    },
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-        except Exception as e:
-            logger.error(f"Ошибка проверки подписи: {str(e)}")
-            return Response(
-                {
+            is_valid = TelegramAuthService.validate_telegram_data(validated_data)
+            if not is_valid:
+                logger.error(f"❌ Неверная подпись Telegram для пользователя {user_id}")
+                return Response({
                     'success': False,
-                    'error': 'validation_error',
-                    'message': f'Ошибка проверки подписи: {str(e)}'
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
+                    'error': 'invalid_signature',
+                    'message': 'Неверная подпись Telegram. Данные могли быть изменены.',
+                    'user_id': user_id
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            logger.info(f"✅ Подпись Telegram проверена успешно")
+            
+        except Exception as e:
+            logger.error(f"❌ Ошибка проверки подписи: {str(e)}")
+            return Response({
+                'success': False,
+                'error': 'signature_check_failed',
+                'message': f'Ошибка проверки подписи: {str(e)}',
+                'user_id': user_id
+            }, status=status.HTTP_400_BAD_REQUEST)
         
+        # 4. Создание/получение пользователя
         try:
-            # Получаем или создаем пользователя
             user, is_new = TelegramAuthService.get_or_create_user(validated_data)
-            logger.info(f"Пользователь {'создан' if is_new else 'найден'}: {user.username}")
+            logger.info(f"✅ Пользователь {'создан' if is_new else 'найден'}: {user.username} (ID: {user.id})")
             
-            # Создаем токены
+        except Exception as e:
+            logger.error(f"❌ Ошибка создания/получения пользователя: {str(e)}", exc_info=True)
+            return Response({
+                'success': False,
+                'error': 'user_creation_failed',
+                'message': f'Ошибка создания пользователя: {str(e)}',
+                'user_id': user_id
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        # 5. Создание JWT токенов
+        try:
             tokens = TelegramAuthService.create_jwt_tokens(user)
+            logger.info(f"✅ JWT токены созданы для пользователя {user.username}")
             
-            # Получаем профиль пользователя
+        except Exception as e:
+            logger.error(f"❌ Ошибка создания токенов: {str(e)}")
+            return Response({
+                'success': False,
+                'error': 'token_creation_failed',
+                'message': f'Ошибка создания токенов: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        
+        # 6. Получение данных профиля
+        try:
             profile_serializer = UserProfileSerializer(user)
             user_data = profile_serializer.data
-            
-            # Формируем успешный ответ
-            response_data = {
-                'success': True,
-                'tokens': tokens,
-                'user': user_data,
-                'is_new_user': is_new,
-                'frontend_redirect': self._get_frontend_redirect_url(request, data)
-            }
-            
-            # Добавляем заголовки для установки кук через фронтенд
-            response = Response(response_data, status=status.HTTP_200_OK)
-            
-            # Устанавливаем CORS заголовки
-            self._add_cors_headers(response, request)
-            
-            # Добавляем инструкции по установке кук на фронтенде
-            response.data['cookie_instructions'] = {
-                'access_token': {
-                    'value': tokens['access'],
-                    'max_age': 86400,
-                    'path': '/',
-                    'secure': True,
-                    'samesite': 'None'
-                },
-                'refresh_token': {
-                    'value': tokens['refresh'],
-                    'max_age': 604800,
-                    'path': '/',
-                    'secure': True,
-                    'samesite': 'None'
-                }
-            }
-            
-            logger.info(f"Успешная авторизация для пользователя {user.username}")
-            return response
+            logger.info(f"✅ Данные профиля получены")
             
         except Exception as e:
-            logger.error(f"Ошибка авторизации: {str(e)}", exc_info=True)
-            return Response(
-                {
-                    'success': False,
-                    'error': 'server_error',
-                    'message': f'Ошибка сервера: {str(e)}'
-                },
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
+            logger.error(f"❌ Ошибка получения профиля: {str(e)}")
+            # Все равно возвращаем успех, но без полного профиля
+            user_data = {
+                'id': user.id,
+                'username': user.username,
+                'first_name': user.first_name,
+                'last_name': user.last_name,
+                'telegram_id': user_id
+            }
+        
+        # 7. Формирование успешного ответа
+        response_data = {
+            'success': True,
+            'message': 'Успешная регистрация' if is_new else 'Успешная авторизация',
+            'is_new_user': is_new,
+            'tokens': {
+                'access': tokens['access'],
+                'refresh': tokens['refresh'],
+                'access_expires_in': 86400,  # 24 часа
+                'refresh_expires_in': 604800,  # 7 дней
+            },
+            'user': user_data,
+            'timestamp': validated_data['auth_date'],
+            'cookie_instructions': self._get_cookie_instructions(tokens)
+        }
+        
+        logger.info(f"🎉 АВТОРИЗАЦИЯ УСПЕШНА! Пользователь: {user.username}")
+        logger.info("=" * 60)
+        
+        response = Response(response_data, status=status.HTTP_200_OK)
+        self._add_cors_headers(response, request)
+        
+        return response
     
-    def _get_frontend_redirect_url(self, request, data):
+    def _get_cookie_instructions(self, tokens):
         """
-        Возвращает URL для редиректа на фронтенде (только для информации)
+        Возвращает инструкции для фронтенда по установке кук
         """
-        # 1. Параметр redirect из запроса
-        redirect_param = data.get('redirect') or request.GET.get('redirect') or request.POST.get('redirect')
-        if redirect_param and self._is_safe_url(redirect_param, request):
-            return redirect_param
-        
-        # 2. Origin заголовок
-        origin = request.META.get('HTTP_ORIGIN')
-        if origin and self._is_safe_url(origin, request):
-            return origin
-        
-        # 3. Переменная окружения
-        frontend_url = os.environ.get('FRONTEND_URL')
-        if frontend_url:
-            return frontend_url
-        
-        # 4. По умолчанию
-        return '/'
-    
-    def _is_safe_url(self, url, request):
-        """
-        Проверяет, что URL безопасен
-        """
-        try:
-            if not url:
-                return False
-            
-            parsed = urlparse(url)
-            
-            if parsed.scheme not in ('http', 'https', ''):
-                return False
-            
-            # Разрешаем все для тестирования
-            return True
-            
-        except Exception:
-            return False
+        return {
+            'access_token': {
+                'name': 'access_token',
+                'value': tokens['access'],
+                'options': {
+                    'maxAge': 86400,  # 24 часа в секундах
+                    'path': '/',
+                    'secure': True,
+                    'sameSite': 'None',  # Для кросс-доменных запросов
+                    'httpOnly': False,   # Доступен для JS
+                }
+            },
+            'refresh_token': {
+                'name': 'refresh_token',
+                'value': tokens['refresh'],
+                'options': {
+                    'maxAge': 604800,  # 7 дней в секундах
+                    'path': '/',
+                    'secure': True,
+                    'sameSite': 'None',
+                    'httpOnly': False,
+                }
+            }
+        }
     
     def _add_cors_headers(self, response, request):
-        """
-        Добавляет CORS заголовки
-        """
+        """Добавляет CORS заголовки"""
         origin = request.META.get('HTTP_ORIGIN')
         if origin:
             response['Access-Control-Allow-Origin'] = origin
@@ -207,22 +200,61 @@ class TelegramLoginView(APIView):
         return response
     
     def options(self, request, *args, **kwargs):
-        """
-        Обработка OPTIONS запросов для CORS
-        """
+        """Обработка OPTIONS запросов для CORS"""
         response = Response()
         self._add_cors_headers(response, request)
-        response['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+        response['Access-Control-Allow-Methods'] = 'POST, OPTIONS'
         response['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-Requested-With'
+        response['Access-Control-Max-Age'] = '86400'
         return response
 
 
-class RefreshTokenView(TokenRefreshView):
+class RefreshTokenAPIView(TokenRefreshView):
     """
     Обновление JWT токена
     """
     serializer_class = RefreshTokenSerializer
     permission_classes = [permissions.AllowAny]
+    
+    def post(self, request, *args, **kwargs):
+        logger.info("🔄 Запрос на обновление токена")
+        return super().post(request, *args, **kwargs)
+    
+    def finalize_response(self, request, response, *args, **kwargs):
+        response = super().finalize_response(request, response, *args, **kwargs)
+        
+        # Добавляем CORS заголовки
+        origin = request.META.get('HTTP_ORIGIN')
+        if origin:
+            response['Access-Control-Allow-Origin'] = origin
+            response['Access-Control-Allow-Credentials'] = 'true'
+        
+        return response
+
+
+class UserProfileAPIView(APIView):
+    """
+    Получение профиля текущего пользователя
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    
+    def get(self, request):
+        user = request.user
+        logger.info(f"📋 Запрос профиля пользователя {user.username}")
+        
+        try:
+            profile_serializer = UserProfileSerializer(user)
+            return Response(profile_serializer.data)
+            
+        except Exception as e:
+            logger.error(f"Ошибка получения профиля: {str(e)}")
+            return Response({
+                'id': user.id,
+                'username': user.username,
+                'first_name': user.first_name,
+                'last_name': user.last_name,
+                'error': 'profile_data_partial'
+            })
     
     def finalize_response(self, request, response, *args, **kwargs):
         response = super().finalize_response(request, response, *args, **kwargs)
@@ -235,36 +267,65 @@ class RefreshTokenView(TokenRefreshView):
         return response
 
 
-class UserProfileView(APIView):
+class AuthStatusAPIView(APIView):
     """
-    Получение профиля текущего пользователя
+    Проверка статуса авторизации
+    """
+    permission_classes = [permissions.AllowAny]
+    
+    def get(self, request):
+        is_authenticated = request.user.is_authenticated
+        
+        if is_authenticated:
+            data = {
+                'authenticated': True,
+                'user_id': request.user.id,
+                'username': request.user.username,
+                'first_name': request.user.first_name,
+                'last_name': request.user.last_name,
+            }
+            logger.info(f"✅ Пользователь авторизован: {request.user.username}")
+        else:
+            data = {
+                'authenticated': False,
+                'message': 'Требуется авторизация'
+            }
+            logger.info("❌ Пользователь не авторизован")
+        
+        serializer = AuthStatusSerializer(data)
+        return Response(serializer.data)
+    
+    def finalize_response(self, request, response, *args, **kwargs):
+        response = super().finalize_response(request, response, *args, **kwargs)
+        
+        origin = request.META.get('HTTP_ORIGIN')
+        if origin:
+            response['Access-Control-Allow-Origin'] = origin
+            response['Access-Control-Allow-Credentials'] = 'true'
+        
+        return response
+
+
+class LogoutAPIView(APIView):
+    """
+    Выход из системы
     """
     permission_classes = [permissions.IsAuthenticated]
     
-    def get(self, request):
+    def post(self, request):
         user = request.user
-        
-        try:
-            profile = user.telegram_profile
-            telegram_data = {
-                'telegram_id': profile.telegram_id,
-                'telegram_username': profile.telegram_username,
-                'telegram_first_name': profile.telegram_first_name,
-                'telegram_last_name': profile.telegram_last_name,
-                'telegram_photo_url': profile.telegram_photo_url,
-            }
-        except Exception:
-            telegram_data = {}
+        logger.info(f"🚪 Выход пользователя {user.username}")
         
         response_data = {
-            'id': user.id,
+            'success': True,
+            'message': 'Успешный выход из системы',
+            'user_id': user.id,
             'username': user.username,
-            'first_name': user.first_name,
-            'last_name': user.last_name,
-            'email': user.email or '',
-            'date_joined': user.date_joined,
-            'last_login': user.last_login,
-            **telegram_data
+            'instructions': {
+                'clear_local_storage': ['access_token', 'refresh_token', 'user_data'],
+                'clear_cookies': ['access_token', 'refresh_token', 'auth_status'],
+                'redirect_to': '/'
+            }
         }
         
         return Response(response_data)
@@ -280,46 +341,16 @@ class UserProfileView(APIView):
         return response
 
 
-class AuthStatusView(APIView):
+class HealthCheckAPIView(APIView):
     """
-    Проверка статуса авторизации
+    Проверка здоровья API
     """
     permission_classes = [permissions.AllowAny]
     
     def get(self, request):
-        if request.user.is_authenticated:
-            return Response({
-                'authenticated': True,
-                'user_id': request.user.id,
-                'username': request.user.username
-            })
-        else:
-            return Response({
-                'authenticated': False
-            })
-    
-    def finalize_response(self, request, response, *args, **kwargs):
-        response = super().finalize_response(request, response, *args, **kwargs)
-        
-        origin = request.META.get('HTTP_ORIGIN')
-        if origin:
-            response['Access-Control-Allow-Origin'] = origin
-            response['Access-Control-Allow-Credentials'] = 'true'
-        
-        return response
-
-
-class LogoutView(APIView):
-    """
-    Выход из системы (возвращает JSON)
-    """
-    permission_classes = [permissions.IsAuthenticated]
-    
-    def post(self, request):
         return Response({
-            'success': True,
-            'message': 'Успешный выход из системы',
-            'cookie_instructions': {
-                'clear_cookies': ['access_token', 'refresh_token', 'auth_status', 'user_info']
-            }
+            'status': 'healthy',
+            'service': 'telegram_auth',
+            'timestamp': int(time.time()),
+            'version': '1.0.0'
         })
