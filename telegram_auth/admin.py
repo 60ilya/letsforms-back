@@ -1,67 +1,32 @@
-# telegram_auth/admin.py
 from django.contrib import admin
-from django.contrib.auth.admin import UserAdmin
-from .models import TelegramUser
+from .models import TelegramUserProfile
 
-
-@admin.register(TelegramUser)
-class TelegramUserAdmin(UserAdmin):
-    """Админ-панель для TelegramUser"""
-    
-    list_display = (
-        'telegram_id',
-        'telegram_username',
-        'telegram_first_name',
-        'telegram_last_name',
-        'is_active',
-        'is_staff',
-        'date_joined',
-    )
-    
-    list_filter = (
-        'is_active',
-        'is_staff',
-        'is_superuser',
-        'date_joined',
-    )
-    
-    search_fields = (
-        'telegram_id',
-        'telegram_username',
-        'telegram_first_name',
-        'telegram_last_name',
-        'email',
-    )
-    
-    ordering = ('-date_joined',)
-    
+@admin.register(TelegramUserProfile)
+class TelegramUserProfileAdmin(admin.ModelAdmin):
+    list_display = ('telegram_id', 'telegram_username', 'user', 'created_at', 'updated_at')
+    search_fields = ('telegram_id', 'telegram_username', 'user__username', 'telegram_first_name', 'telegram_last_name')
+    list_filter = ('created_at', 'updated_at')
+    readonly_fields = ('created_at', 'updated_at')
     fieldsets = (
-        (None, {'fields': ('telegram_id', 'password')}),
-        ('Telegram Info', {
+        ('Пользователь Django', {
+            'fields': ('user',)
+        }),
+        ('Данные Telegram', {
             'fields': (
+                'telegram_id',
                 'telegram_username',
                 'telegram_first_name',
                 'telegram_last_name',
                 'telegram_photo_url',
-                'telegram_auth_date',
-                'telegram_data',
+                'telegram_auth_date'
             )
         }),
-        ('Permissions', {
+        ('Техническая информация', {
             'fields': (
-                'is_active',
-                'is_staff',
-                'is_superuser',
-                'groups',
-                'user_permissions',
-            )
-        }),
-        ('Important dates', {'fields': ('last_login', 'date_joined')}),
-    )
-    
-    add_fieldsets = (
-        (None, {
-            'classes': ('wide',),
-            'fields': ('telegram_id', 'password1', 'password2'),
+                'telegram_data',
+                'created_at',
+                'updated_at'
+            ),
+            'classes': ('collapse',)
         }),
     )
