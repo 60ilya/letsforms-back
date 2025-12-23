@@ -1,0 +1,7 @@
+django==5.2.8
+mysqlclient==2.2.7
+djangorestframework
+django-cors-headers
+django_user_agents
+drf-yasg
+python-dotenv
