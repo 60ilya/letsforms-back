@@ -1,13 +1,12 @@
 # telegram_auth/services.py
 import hashlib
 import hmac
-from urllib.parse import parse_qs
 import json
-from datetime import datetime
+import time
+from urllib.parse import parse_qs, unquote
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from rest_framework_simplejwt.tokens import RefreshToken
-import time
 
 User = get_user_model()
 
@@ -15,52 +14,13 @@ User = get_user_model()
 class TelegramAuthService:
     """
     Сервис для проверки данных Telegram Login Widget
-    Реализует алгоритм проверки из документации Telegram
     """
-    
-    @staticmethod
-    def parse_telegram_init_data(init_data_string: str) -> dict:
-        """
-        Парсит строку initData от Telegram Widget
-        Пример: "query_id=...&user=...&auth_date=...&hash=..."
-        """
-        from urllib.parse import parse_qs, unquote
-        import json
-        
-        parsed = parse_qs(init_data_string)
-        
-        # Преобразуем списки в одиночные значения
-        result = {}
-        for key, value in parsed.items():
-            if value and len(value) == 1:
-                result[key] = unquote(value[0])
-            elif value:
-                result[key] = value
-        
-        # Парсим JSON поле user если оно есть
-        if 'user' in result:
-            try:
-                result['user'] = json.loads(result['user'])
-            except json.JSONDecodeError:
-                # Если не JSON, оставляем как есть
-                pass
-        
-        return result
     
     @staticmethod
     def validate_telegram_data(telegram_data: dict) -> bool:
         """
-        Проверяет подпись данных Telegram по алгоритму из документации:
-        1. Создает data-check-string из всех полей кроме hash
-        2. Сравнивает HMAC-SHA256 подпись
-        
-        Args:
-            telegram_data: Словарь с параметрами от Telegram
-            
-        Returns:
-            bool: True если данные валидны
+        Проверяет подпись данных Telegram
         """
-        # Получаем хеш и удаляем его из данных для проверки
         received_hash = telegram_data.get('hash')
         if not received_hash:
             return False
@@ -112,29 +72,19 @@ class TelegramAuthService:
     def parse_telegram_init_data(init_data_string: str) -> dict:
         """
         Парсит строку initData от Telegram Widget
-        
-        Args:
-            init_data_string: Строка вида "id=...&first_name=...&hash=..."
-            
-        Returns:
-            dict: Распарсенные данные
         """
         parsed = parse_qs(init_data_string)
         
-        # Преобразуем списки в одиночные значения
         result = {}
         for key, value in parsed.items():
             if value and len(value) == 1:
-                result[key] = value[0]
-            elif value:
-                result[key] = value
+                result[key] = unquote(value[0])
         
         # Парсим JSON поле user если оно есть
         if 'user' in result:
             try:
                 result['user'] = json.loads(result['user'])
             except json.JSONDecodeError:
-                # Если не JSON, оставляем как есть
                 pass
         
         return result
@@ -143,12 +93,6 @@ class TelegramAuthService:
     def get_or_create_user(telegram_data: dict):
         """
         Получает или создает пользователя на основе данных Telegram
-        
-        Args:
-            telegram_data: Данные от Telegram Widget
-            
-        Returns:
-            tuple: (user, created)
         """
         # Извлекаем user данные
         user_data = telegram_data.get('user') or {}
@@ -172,23 +116,45 @@ class TelegramAuthService:
         if not telegram_id:
             raise ValueError("Telegram ID не найден в данных")
         
-        # Ищем или создаем пользователя
-        user, created = User.get_or_create_from_telegram_data(merged_data)
-        return user, created
+        # Ищем пользователя по telegram_id
+        try:
+            user = User.objects.get(telegram_id=telegram_id)
+            is_new = False
+            
+            # Обновляем данные
+            user.telegram_username = merged_data.get('username', user.telegram_username)
+            user.telegram_first_name = merged_data.get('first_name', user.telegram_first_name)
+            user.telegram_last_name = merged_data.get('last_name', user.telegram_last_name)
+            user.telegram_photo_url = merged_data.get('photo_url', user.telegram_photo_url)
+            user.telegram_data = merged_data
+            user.save()
+            
+        except User.DoesNotExist:
+            # Создаем нового пользователя
+            username = merged_data.get('username', f"tg_{telegram_id}")
+            
+            user = User.objects.create(
+                telegram_id=telegram_id,
+                telegram_username=merged_data.get('username'),
+                telegram_first_name=merged_data.get('first_name', ''),
+                telegram_last_name=merged_data.get('last_name', ''),
+                telegram_photo_url=merged_data.get('photo_url'),
+                telegram_data=merged_data,
+                username=username,
+                first_name=merged_data.get('first_name', ''),
+                last_name=merged_data.get('last_name', ''),
+                is_active=True,
+            )
+            is_new = True
+        
+        return user, is_new
     
     @staticmethod
     def create_jwt_tokens(user):
         """
         Создает JWT токены для пользователя
-        
-        Args:
-            user: Объект пользователя
-            
-        Returns:
-            dict: Токены access и refresh
         """
         refresh = RefreshToken.for_user(user)
-        
         return {
             'refresh': str(refresh),
             'access': str(refresh.access_token),
