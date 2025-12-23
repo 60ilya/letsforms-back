@@ -203,7 +203,10 @@ CSRF_TRUSTED_ORIGINS = [
     'http://localhost:3000',
     'http://127.0.0.1:3000',
     'http://192.168.0.3:3000',
-    'l-manager.ru',
+    'https://l-manager.ru',
+    'https://www.l-manager.ru',
+    'http://l-manager.ru',    
+    'http://www.l-manager.ru',
     'https://6280096-uc22397.twc1.net',
 ]
 
