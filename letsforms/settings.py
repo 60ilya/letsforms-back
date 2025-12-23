@@ -168,6 +168,14 @@ REST_FRAMEWORK = {
 CORS_ALLOW_ALL_ORIGINS = True
 CORS_ALLOW_CREDENTIALS = True
 
+# CORS_ALLOWED_ORIGINS = [
+#     "http://localhost:8000",
+#     "http://127.0.0.1:8000",
+#     "https://l-manager.ru",
+#     "https://web.telegram.org",
+#     "https://webk.telegram.org",
+# ]
+
 # Разрешить все заголовки
 CORS_ALLOW_HEADERS = [
     'accept',
@@ -195,6 +203,8 @@ CSRF_TRUSTED_ORIGINS = [
     'http://localhost:3000',
     'http://127.0.0.1:3000',
     'http://192.168.0.3:3000',
+    'l-manager.ru',
+    'https://6280096-uc22397.twc1.net',
 ]
 
 SWAGGER_SETTINGS = {
