@@ -6,6 +6,8 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.views import TokenRefreshView
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework.throttling import AnonRateThrottle
+from django.views.decorators.csrf import csrf_exempt
+from django.utils.decorators import method_decorator
 
 from .services import TelegramAuthService
 from .serializers import TelegramAuthSerializer, UserProfileSerializer
@@ -17,40 +19,61 @@ class TelegramAuthThrottle(AnonRateThrottle):
     rate = '5/minute'  # 5 попыток в минуту
 
 
+
+@method_decorator(csrf_exempt, name='dispatch')  # Отключаем CSRF для этого endpoint
 class TelegramAuthView(APIView):
     """
     Аутентификация через Telegram Login Widget
-    Поддерживает два варианта передачи данных:
-    1. initData строка
-    2. Отдельные параметры (id, hash, auth_date и т.д.)
+    Поддерживает и GET (от виджета) и POST (от фронтенда)
     """
     permission_classes = [AllowAny]
-    throttle_classes = [TelegramAuthThrottle]
     
-    def post(self, request):
-        serializer = TelegramAuthSerializer(data=request.data)
+    def get(self, request):
+        """
+        Обработка GET запроса от Telegram Widget
+        Telegram отправляет параметры в query string:
+        /api/auth/telegram/?id=...&hash=...&auth_date=...
+        """
+        # Получаем параметры из GET запроса
+        telegram_data = request.GET.dict()
         
-        if not serializer.is_valid():
+        if not telegram_data:
             return Response(
-                {
-                    'error': 'Неверные данные',
-                    'details': serializer.errors
-                },
+                {'error': 'No Telegram data provided'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        telegram_data = serializer.validated_data
+        return self.process_telegram_auth(telegram_data)
+    
+    def post(self, request):
+        """
+        Обработка POST запроса от фронтенда
+        Может содержать initData строку или отдельные параметры
+        """
+        # Если есть initData строка
+        if 'initData' in request.data:
+            init_data = request.data['initData']
+            # Парсим initData строку в словарь
+            from urllib.parse import parse_qs
+            parsed = parse_qs(init_data)
+            telegram_data = {k: v[0] for k, v in parsed.items() if v}
+        else:
+            # Или отдельные параметры
+            telegram_data = request.data
         
+        return self.process_telegram_auth(telegram_data)
+    
+    def process_telegram_auth(self, telegram_data):
+        """
+        Общая логика обработки аутентификации
+        """
         try:
             # Проверяем подпись Telegram
             is_valid = TelegramAuthService.validate_telegram_data(telegram_data)
             
             if not is_valid:
                 return Response(
-                    {
-                        'error': 'Недействительная подпись Telegram',
-                        'message': 'Данные не прошли проверку безопасности'
-                    },
+                    {'error': 'Invalid Telegram signature'},
                     status=status.HTTP_401_UNAUTHORIZED
                 )
             
@@ -60,24 +83,28 @@ class TelegramAuthView(APIView):
             # Создаем JWT токены
             tokens = TelegramAuthService.create_jwt_tokens(user)
             
-            # Сериализуем данные пользователя
-            user_data = UserProfileSerializer(user).data
-            
+            # Редирект на фронтенд или возвращаем JSON
             return Response({
                 'success': True,
                 'is_new_user': is_new,
-                'user': user_data,
+                'user': {
+                    'id': user.id,
+                    'telegram_id': user.telegram_id,
+                    'username': user.telegram_username,
+                    'first_name': user.telegram_first_name,
+                    'photo_url': user.telegram_photo_url,
+                },
                 'tokens': tokens
             })
             
         except ValueError as e:
             return Response(
-                {'error': 'Ошибка валидации', 'message': str(e)},
+                {'error': 'Validation error', 'message': str(e)},
                 status=status.HTTP_400_BAD_REQUEST
             )
         except Exception as e:
             return Response(
-                {'error': 'Внутренняя ошибка сервера', 'message': str(e)},
+                {'error': 'Server error', 'message': str(e)},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
 

@@ -19,6 +19,35 @@ class TelegramAuthService:
     """
     
     @staticmethod
+    def parse_telegram_init_data(init_data_string: str) -> dict:
+        """
+        Парсит строку initData от Telegram Widget
+        Пример: "query_id=...&user=...&auth_date=...&hash=..."
+        """
+        from urllib.parse import parse_qs, unquote
+        import json
+        
+        parsed = parse_qs(init_data_string)
+        
+        # Преобразуем списки в одиночные значения
+        result = {}
+        for key, value in parsed.items():
+            if value and len(value) == 1:
+                result[key] = unquote(value[0])
+            elif value:
+                result[key] = value
+        
+        # Парсим JSON поле user если оно есть
+        if 'user' in result:
+            try:
+                result['user'] = json.loads(result['user'])
+            except json.JSONDecodeError:
+                # Если не JSON, оставляем как есть
+                pass
+        
+        return result
+    
+    @staticmethod
     def validate_telegram_data(telegram_data: dict) -> bool:
         """
         Проверяет подпись данных Telegram по алгоритму из документации:
