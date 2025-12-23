@@ -53,45 +53,32 @@ class TelegramLoginView(APIView):
     
     def _get_redirect_url(self, request):
         """
-        Автоматически определяет URL для редиректа на основе источника запроса
+        Универсальный метод: всегда возвращаем на домен, с которого пришел запрос
         """
-        # 1. Проверяем параметр redirect в запросе
+        # 1. Проверяем явный redirect параметр
         redirect_param = request.GET.get('redirect') or request.POST.get('redirect')
-        if redirect_param:
-            # Проверяем безопасность URL
-            if self._is_safe_url(redirect_param, request):
-                return redirect_param
+        if redirect_param and self._is_safe_url(redirect_param, request):
+            return redirect_param
         
-        # 2. Проверяем referer (страница, с которой пришел пользователь)
-        referer = request.META.get('HTTP_REFERER')
-        if referer:
-            if self._is_safe_url(referer, request):
-                # Убираем query параметры из referer (чтобы не дублировать)
-                parsed = urlparse(referer)
-                clean_referer = urlunparse((
-                    parsed.scheme,
-                    parsed.netloc,
-                    parsed.path,
-                    '',  # params
-                    '',  # query
-                    ''   # fragment
-                ))
-                return clean_referer
-        
-        # 3. Проверяем origin (для CORS запросов)
+        # 2. Проверяем Origin заголовок (для CORS запросов из фронтенда)
         origin = request.META.get('HTTP_ORIGIN')
-        if origin:
-            if self._is_safe_url(origin, request):
-                return origin
+        if origin and self._is_safe_url(origin, request):
+            return origin.rstrip('/')  # Возвращаем origin без слеша в конце
         
-        # 4. Используем текущий домен с путем по умолчанию
-        current_domain = request.build_absolute_uri('/')
-        parsed = urlparse(current_domain)
-        base_domain = f"{parsed.scheme}://{parsed.netloc}"
+        # 3. Проверяем Referer заголовок
+        referer = request.META.get('HTTP_REFERER')
+        if referer and self._is_safe_url(referer, request):
+            # Берем только базовый URL из referer (убираем путь)
+            parsed = urlparse(referer)
+            base_url = f"{parsed.scheme}://{parsed.netloc}"
+            return base_url
         
-        # 5. Путь по умолчанию
-        default_path = getattr(settings, 'DEFAULT_REDIRECT_PATH', '/')
-        return f"{base_domain}{default_path}"
+        # 4. Если ничего не нашли, используем текущий хост запроса к бэкенду
+        # Но это должно быть крайним случаем
+        current_host = request.get_host()
+        scheme = 'https' if request.is_secure() else 'http'
+        
+        return f"{scheme}://{current_host}"
     
     def _is_safe_url(self, url, request):
         """
@@ -190,41 +177,40 @@ class TelegramLoginView(APIView):
 
     def _set_auth_cookies(self, response, tokens, user, request):
         """
-        Устанавливает все необходимые куки для авторизации
+        Устанавливает куки для домена фронтенда
         """
-        # 1. JWT токены (httpOnly - недоступны из JS для безопасности)
+        # Определяем фронтенд домен из redirect_url
+        redirect_url = self._get_redirect_url(request)
+        parsed = urlparse(redirect_url)
+        frontend_domain = parsed.netloc
+        
+        # Для localhost не задаем domain в куках
+        cookie_domain = None if 'localhost' in frontend_domain or '127.0.0.1' in frontend_domain else frontend_domain
+        
+        # Для TUNA и других публичных доменов используем samesite='None'
+        samesite_value = 'None' if frontend_domain and 'localhost' not in frontend_domain else 'Lax'
+        
+        # Устанавливаем куки
         response.set_cookie(
             'access_token',
             tokens['access'],
             httponly=True,
-            secure=not settings.DEBUG and request.is_secure(),
-            samesite='Lax',
-            max_age=86400,  # 24 часа
+            secure=True,
+            samesite=samesite_value,
+            max_age=86400,
             path='/',
-            domain=self._get_cookie_domain(request)
+            domain=cookie_domain
         )
-
+        
         response.set_cookie(
             'refresh_token',
             tokens['refresh'],
             httponly=True,
-            secure=not settings.DEBUG and request.is_secure(),
-            samesite='Lax',
-            max_age=604800,  # 7 дней
+            secure=True,
+            samesite=samesite_value,
+            max_age=604800,
             path='/',
-            domain=self._get_cookie_domain(request)
-        )
-
-        # 2. Только безопасные данные о пользователе для JS (без ID!)
-        # Но лучше вообще убрать user_info из кук и получать через API
-        response.set_cookie(
-            'auth_status',
-            'authenticated',  # Просто флаг, что пользователь авторизован
-            secure=not settings.DEBUG and request.is_secure(),
-            samesite='Lax',
-            max_age=86400,
-            path='/',
-            domain=self._get_cookie_domain(request)
+            domain=cookie_domain
         )
 
     def _add_safe_url_params(self, redirect_to, user, is_new):
