@@ -1,22 +1,21 @@
 from django.urls import path
 from .views import (
-    TelegramLoginAPIView,
+    UniversalAuthAPIView,  # Универсальный эндпоинт
     RefreshTokenAPIView,
     UserProfileAPIView,
-    AuthStatusAPIView,
-    LogoutAPIView,
-    HealthCheckAPIView
+    LogoutAPIView
 )
 
 urlpatterns = [
-    # Основные endpoints
-    path('login/', TelegramLoginAPIView.as_view(), name='telegram-login'),
-    path('refresh/', RefreshTokenAPIView.as_view(), name='refresh-token'),
-    path('profile/', UserProfileAPIView.as_view(), name='user-profile'),
-    path('status/', AuthStatusAPIView.as_view(), name='auth-status'),
-    path('logout/', LogoutAPIView.as_view(), name='logout'),
-    path('health/', HealthCheckAPIView.as_view(), name='health-check'),
+    # Универсальный эндпоинт для сайта и бота
+    path('auth/', UniversalAuthAPIView.as_view(), name='universal-auth'),
     
-    # Legacy поддержка (опционально)
-    path('telegram/', TelegramLoginAPIView.as_view(), name='telegram-login-legacy'),
+    # Legacy поддержка (если нужно)
+    path('login/', UniversalAuthAPIView.as_view(), name='login'),
+    path('telegram/', UniversalAuthAPIView.as_view(), name='telegram-auth'),
+    
+    # Другие эндпоинты
+    path('auth/refresh/', RefreshTokenAPIView.as_view(), name='refresh-token'),
+    path('auth/profile/', UserProfileAPIView.as_view(), name='user-profile'),
+    path('auth/logout/', LogoutAPIView.as_view(), name='logout'),
 ]
