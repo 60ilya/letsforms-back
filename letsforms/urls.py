@@ -8,10 +8,14 @@ schema_view = get_schema_view(
     openapi.Info(
         title="LetsForms API",
         default_version='v1',
-        description="API для создания и управления формами и опросниками",
+        description="API для LetsForms",
+        contact=openapi.Contact(email="contact@l-manager.ru"),
+        license=openapi.License(name="BSD License"),
     ),
     public=True,
     permission_classes=(permissions.AllowAny,),
+    # Используем l-manager.ru в качестве основного хоста
+    url='http://l-manager.ru/api/'
 )
 
 urlpatterns = [
