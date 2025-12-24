@@ -78,7 +78,7 @@ class QuestionSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Question
-        fields = ['id', 'form', 'form_hash', 'type', 'text', 'options', 'is_required', 'order']
+        fields = ['id', 'form', 'form_hash', 'type', 'text', 'placeholder', 'options', 'is_required', 'order']
         read_only_fields = ['id', 'form_hash']
         extra_kwargs = {
             'form': {'required': False, 'write_only': True} 

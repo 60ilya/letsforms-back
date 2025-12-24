@@ -250,15 +250,19 @@ class Question(models.Model):
         ('text', 'Текстовый ответ'),
         ('text_area', 'Текстовый ответ'),
         ('number', 'Числовой ответ'),
+        ('scale', 'Числовой ответ от 1 до 10'),
         ('date', 'Дата'),
         ('single_choice', 'Один вариант'),
         ('multiple_choice', 'Несколько вариантов'),
+        ('select', 'Выпадающий список (один вариант)'),
+        ('text_area', 'Большой текстовый ответ'),
 
     ]
 
     form = models.ForeignKey(Form, on_delete=models.CASCADE, related_name='questions')
     type = models.CharField(max_length=20, choices=QUESTION_TYPES, default='text')
     text = models.TextField()
+    placeholder = models.TextField(max_length=30, blank=True, null=True)
     options = models.JSONField(blank=True, null=True)
     is_required = models.BooleanField(default=True)
     order = models.PositiveIntegerField(default=0)
