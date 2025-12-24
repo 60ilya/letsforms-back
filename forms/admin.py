@@ -2,9 +2,9 @@
 from django.contrib import admin
 from .models import UserProfile, Form, Question, Response as FormResponse
 
-@admin.register(UserProfile)
-class UserProfileAdmin(admin.ModelAdmin):
-    list_display = ['user', 'telegram_id', 'created_at']
+# @admin.register(UserProfile)
+# class UserProfileAdmin(admin.ModelAdmin):
+#     list_display = ['user', 'telegram_id', 'created_at']
 
 @admin.register(Form)
 class FormAdmin(admin.ModelAdmin):

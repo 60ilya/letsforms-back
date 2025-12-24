@@ -2,17 +2,146 @@ from django.db import models
 from django.contrib.auth.models import User
 import secrets
 import string
+from django.utils import timezone
 from django.utils.crypto import get_random_string
 
 class UserProfile(models.Model):
-    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name='profile')
-    telegram_id = models.BigIntegerField(unique=True, null=True, blank=True)
+    """
+    Универсальный профиль пользователя
+    Объединяет UserProfile и UserProfile
+    """
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name='profile',
+        verbose_name="Django User"
+    )
+    
+    # Telegram данные
+    telegram_id = models.BigIntegerField(
+        unique=True,
+        null=True,
+        blank=True,
+        verbose_name="Telegram ID",
+        help_text="Уникальный идентификатор пользователя в Telegram"
+    )
+    
+    telegram_username = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        verbose_name="Telegram Username"
+    )
+    
+    telegram_first_name = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        verbose_name="Telegram First Name"
+    )
+    
+    telegram_last_name = models.CharField(
+        max_length=255,
+        null=True,
+        blank=True,
+        verbose_name="Telegram Last Name"
+    )
+    
+    telegram_photo_url = models.URLField(
+        max_length=500,
+        null=True,
+        blank=True,
+        verbose_name="Telegram Photo URL"
+    )
+    
+    telegram_auth_date = models.DateTimeField(
+        default=timezone.now,
+        verbose_name="Last Telegram Auth Date"
+    )
+    
+    telegram_data = models.JSONField(
+        default=dict,
+        blank=True,
+        verbose_name="Telegram Raw Data"
+    )
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     deleted_at = models.DateTimeField(null=True, blank=True)
 
+    class Meta:
+        verbose_name = "User Profile"
+        verbose_name_plural = "User Profiles"
+        ordering = ['-created_at']
+
     def __str__(self):
-        return f"{self.user.username} (TG: {self.telegram_id})"
+        if self.telegram_id:
+            return f"Telegram: {self.telegram_username or f'ID {self.telegram_id}'}"
+        return f"User: {self.user.username}"
+
+    @classmethod
+    def get_or_create_from_telegram(cls, telegram_data):
+        """Получает или создает профиль из данных Telegram"""
+        telegram_id = telegram_data.get('id')
+        
+        if not telegram_id:
+            return None
+        
+        try:
+            # Ищем существующий профиль по telegram_id
+            profile = cls.objects.get(telegram_id=telegram_id)
+            is_new = False
+            
+            # Обновляем Telegram данные
+            profile.update_telegram_data(telegram_data)
+            
+        except cls.DoesNotExist:
+            # Проверяем, есть ли User без профиля
+            username = telegram_data.get('username', f'tg_{telegram_id}')
+            
+            # Создаем User Django
+            user, user_created = User.objects.get_or_create(
+                username=username,
+                defaults={
+                    'first_name': telegram_data.get('first_name', ''),
+                    'last_name': telegram_data.get('last_name', ''),
+                    'is_active': True
+                }
+            )
+            
+            # Создаем профиль
+            profile = cls.objects.create(
+                user=user,
+                telegram_id=telegram_id,
+                telegram_username=telegram_data.get('username'),
+                telegram_first_name=telegram_data.get('first_name', ''),
+                telegram_last_name=telegram_data.get('last_name', ''),
+                telegram_photo_url=telegram_data.get('photo_url'),
+                telegram_data=telegram_data
+            )
+            is_new = True
+        
+        return profile, is_new
+    
+    def update_telegram_data(self, telegram_data):
+        """Обновляет Telegram данные в профиле"""
+        self.telegram_username = telegram_data.get('username', self.telegram_username)
+        self.telegram_first_name = telegram_data.get('first_name', self.telegram_first_name)
+        self.telegram_last_name = telegram_data.get('last_name', self.telegram_last_name)
+        
+        if telegram_data.get('photo_url'):
+            self.telegram_photo_url = telegram_data.get('photo_url')
+        
+        self.telegram_data = telegram_data
+        self.telegram_auth_date = timezone.now()
+        self.save()
+        
+        # Обновляем User Django
+        if self.telegram_first_name:
+            self.user.first_name = self.telegram_first_name
+        if self.telegram_last_name:
+            self.user.last_name = self.telegram_last_name
+        self.user.save()
 
 class Form(models.Model):
     FORM_TYPES = [

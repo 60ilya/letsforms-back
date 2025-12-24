@@ -8,7 +8,7 @@ from django.contrib.auth.models import User
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.utils import timezone
 
-from .models import TelegramUserProfile
+from forms.models import UserProfile
 
 
 class TelegramAuthService:
@@ -97,7 +97,7 @@ class TelegramAuthService:
     def get_or_create_user(telegram_data: dict):
         """
         Получает или создает пользователя на основе данных Telegram
-        Работает со стандартной моделью User и профилем TelegramUserProfile
+        Работает со стандартной моделью User и профилем UserProfile
         """
         # Извлекаем основные данные
         telegram_id = telegram_data.get('id')
@@ -112,7 +112,7 @@ class TelegramAuthService:
         
         # Ищем Telegram профиль
         try:
-            profile = TelegramUserProfile.objects.get(telegram_id=telegram_id)
+            profile = UserProfile.objects.get(telegram_id=telegram_id)
             user = profile.user
             is_new = False
             
@@ -145,7 +145,7 @@ class TelegramAuthService:
                 user.username = username
             user.save()
             
-        except TelegramUserProfile.DoesNotExist:
+        except UserProfile.DoesNotExist:
             # Создаем Django пользователя
             # Проверяем уникальность username
             base_username = username
@@ -164,7 +164,7 @@ class TelegramAuthService:
             )
             
             # Создаем Telegram профиль
-            profile = TelegramUserProfile.objects.create(
+            profile = UserProfile.objects.create(
                 user=user,
                 telegram_id=telegram_id,
                 telegram_username=telegram_data.get('username', ''),

@@ -1,8 +1,8 @@
 from django.contrib import admin
-from .models import TelegramUserProfile
+from forms.models import UserProfile
 
-@admin.register(TelegramUserProfile)
-class TelegramUserProfileAdmin(admin.ModelAdmin):
+@admin.register(UserProfile)
+class UserProfileAdmin(admin.ModelAdmin):
     list_display = ('telegram_id', 'telegram_username', 'user', 'created_at', 'updated_at')
     search_fields = ('telegram_id', 'telegram_username', 'user__username', 'telegram_first_name', 'telegram_last_name')
     list_filter = ('created_at', 'updated_at')
