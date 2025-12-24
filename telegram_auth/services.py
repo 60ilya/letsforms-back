@@ -104,6 +104,12 @@ class TelegramAuthService:
         if not telegram_id:
             raise ValueError("Telegram ID не найден в данных")
         
+        # Подготавливаем данные, заменяем None на пустые строки
+        first_name = telegram_data.get('first_name', '') or ''
+        last_name = telegram_data.get('last_name', '') or ''  # Гарантируем строку
+        username = telegram_data.get('username', f"tg_{telegram_id}") or f"tg_{telegram_id}"
+        photo_url = telegram_data.get('photo_url', '') or ''
+        
         # Ищем Telegram профиль
         try:
             profile = TelegramUserProfile.objects.get(telegram_id=telegram_id)
@@ -111,42 +117,60 @@ class TelegramAuthService:
             is_new = False
             
             # Обновляем профиль
-            profile.telegram_username = telegram_data.get('username', profile.telegram_username)
-            profile.telegram_first_name = telegram_data.get('first_name', profile.telegram_first_name)
-            profile.telegram_last_name = telegram_data.get('last_name', profile.telegram_last_name)
-            profile.telegram_photo_url = telegram_data.get('photo_url', profile.telegram_photo_url)
+            profile.telegram_username = username
+            profile.telegram_first_name = first_name
+            profile.telegram_last_name = last_name
+            if photo_url:
+                profile.telegram_photo_url = photo_url
             profile.telegram_data = telegram_data
             profile.telegram_auth_date = timezone.now()
             profile.save()
             
-            # Обновляем данные User
-            user.first_name = telegram_data.get('first_name', user.first_name)
-            user.last_name = telegram_data.get('last_name', user.last_name)
+            # Обновляем данные User (только если данные не пустые или не указаны)
+            if first_name:
+                user.first_name = first_name
+            if last_name:
+                user.last_name = last_name
+            
+            # Проверяем уникальность username
+            if username and username != user.username:
+                # Если username уже занят другим пользователем
+                if User.objects.filter(username=username).exclude(id=user.id).exists():
+                    # Генерируем уникальный username
+                    counter = 1
+                    base_username = username
+                    while User.objects.filter(username=username).exclude(id=user.id).exists():
+                        username = f"{base_username}_{counter}"
+                        counter += 1
+                user.username = username
             user.save()
             
         except TelegramUserProfile.DoesNotExist:
             # Создаем Django пользователя
-            username = telegram_data.get('username', f"tg_{telegram_id}")
+            # Проверяем уникальность username
+            base_username = username
+            counter = 1
             
-            # Проверяем не существует ли уже пользователь с таким username
-            try:
-                user = User.objects.get(username=username)
-            except User.DoesNotExist:
-                user = User.objects.create_user(
-                    username=username,
-                    first_name=telegram_data.get('first_name', ''),
-                    last_name=telegram_data.get('last_name', ''),
-                    is_active=True
-                )
+            while User.objects.filter(username=username).exists():
+                username = f"{base_username}_{counter}"
+                counter += 1
+            
+            # Создаем пользователя с гарантированно строковыми значениями
+            user = User.objects.create_user(
+                username=username,
+                first_name=first_name,  # Уже гарантированно строка
+                last_name=last_name,     # Уже гарантированно строка
+                is_active=True
+            )
             
             # Создаем Telegram профиль
             profile = TelegramUserProfile.objects.create(
                 user=user,
                 telegram_id=telegram_id,
-                telegram_username=telegram_data.get('username'),
-                telegram_first_name=telegram_data.get('first_name', ''),
-                telegram_last_name=telegram_data.get('last_name', ''),
-                telegram_photo_url=telegram_data.get('photo_url'),
+                telegram_username=telegram_data.get('username', ''),
+                telegram_first_name=first_name,
+                telegram_last_name=last_name,
+                telegram_photo_url=photo_url,
                 telegram_auth_date=timezone.now(),
                 telegram_data=telegram_data
             )
