@@ -107,195 +107,196 @@ class FormViewSet(viewsets.ModelViewSet):
     def change_status(self, request, pk=None):
         """
         Изменить статус формы
-        Доступно только владельцу формы
-        Поддерживаемые статусы: draft, active, paused, archived
+        pk здесь - это hash формы, потому что мы используем его в lookup_field
         """
-        form = get_object_or_404(Form, hash=pk, deleted_at__isnull=True)
-        
-        # Проверяем права доступа
-        if form.user != request.user:
-            return Response({
-                'success': False,
-                'error': 'У вас нет прав для изменения статуса этой формы'
-            }, status=status.HTTP_403_FORBIDDEN)
-        
-        # Получаем новый статус из запроса
-        new_status = request.data.get('status')
-        
-        if not new_status:
-            return Response({
-                'success': False,
-                'error': 'Поле "status" обязательно для заполнения'
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Валидация статуса
-        valid_statuses = ['draft', 'active', 'paused', 'archived']
-        if new_status not in valid_statuses:
-            return Response({
-                'success': False,
-                'error': f'Недопустимый статус. Допустимые значения: {", ".join(valid_statuses)}'
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Проверяем переходы статусов
-        current_status = form.status
-        
-        # Если статус не меняется
-        if new_status == current_status:
-            return Response({
-                'success': False,
-                'error': f'Форма уже имеет статус "{current_status}"'
-            }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Дополнительные проверки для публикации (active)
-        if new_status == 'active':
-            # Проверяем, есть ли вопросы в форме
-            if not form.questions.exists():
+        try:
+            # Получаем форму по hash (pk - это hash в нашем случае)
+            form = get_object_or_404(Form, hash=pk, deleted_at__isnull=True)
+            
+            # Проверяем права доступа
+            if form.user != request.user:
                 return Response({
                     'success': False,
-                    'error': 'Нельзя опубликовать форму без вопросов'
+                    'error': 'У вас нет прав для изменения статуса этой формы'
+                }, status=status.HTTP_403_FORBIDDEN)
+            
+            # Получаем новый статус из запроса
+            new_status = request.data.get('status')
+            
+            if not new_status:
+                return Response({
+                    'success': False,
+                    'error': 'Поле "status" обязательно для заполнения'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Проверяем, что у формы есть заголовок
-            if not form.title:
+            # Валидация статуса
+            valid_statuses = ['draft', 'active', 'paused', 'archived']
+            if new_status not in valid_statuses:
                 return Response({
                     'success': False,
-                    'error': 'У формы должен быть заголовок'
+                    'error': f'Недопустимый статус. Допустимые значения: {", ".join(valid_statuses)}'
                 }, status=status.HTTP_400_BAD_REQUEST)
-        
-        # Проверка на переход из archived (если нужно ограничить)
-        if current_status == 'archived' and new_status != 'archived':
+            
+            # Проверяем переходы статусов
+            current_status = form.status
+            
+            # Если статус не меняется
+            if new_status == current_status:
+                return Response({
+                    'success': False,
+                    'error': f'Форма уже имеет статус "{current_status}"'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Дополнительные проверки для публикации (active)
+            if new_status == 'active':
+                # Проверяем, есть ли вопросы в форме
+                if not form.questions.exists():
+                    return Response({
+                        'success': False,
+                        'error': 'Нельзя опубликовать форму без вопросов'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
+                # Проверяем, что у формы есть заголовок
+                if not form.title:
+                    return Response({
+                        'success': False,
+                        'error': 'У формы должен быть заголовок'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Сохраняем старый статус для логов
+            old_status = form.status
+            
+            # Обновляем статус
+            form.status = new_status
+            form.updated_at = timezone.now()
+            
+            # Если публикуем - записываем дату публикации
+            if new_status == 'active' and old_status != 'active':
+                if not hasattr(form, 'published_at') or getattr(form, 'published_at', None) is None:
+                    form.published_at = timezone.now()
+            
+            form.save()
+            
+            # Формируем сообщение в зависимости от перехода
+            status_messages = {
+                ('draft', 'active'): 'Форма успешно опубликована',
+                ('active', 'paused'): 'Форма приостановлена',
+                ('paused', 'active'): 'Форма возобновлена',
+                ('active', 'draft'): 'Форма снята с публикации',
+                ('any', 'archived'): 'Форма успешно архивирована',
+            }
+            
+            message = status_messages.get((old_status, new_status))
+            if not message:
+                message = f'Статус формы изменен с "{old_status}" на "{new_status}"'
+            
+            return Response({
+                'success': True,
+                'message': message,
+                'data': {
+                    'form_hash': form.hash,
+                    'form_title': form.title,
+                    'old_status': old_status,
+                    'new_status': new_status,
+                    'updated_at': form.updated_at.isoformat(),
+                    'questions_count': form.questions.count(),
+                }
+            })
+            
+        except Exception as e:
+            # logger.error(f"Error changing form status: {e}", exc_info=True)
             return Response({
                 'success': False,
-                'error': 'Нельзя изменить статус архивированной формы'
-            }, status=status.HTTP_400_BAD_REQUEST)
+                'error': 'Внутренняя ошибка сервера'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
-        # Сохраняем старый статус для логов
-        old_status = form.status
+    # @action(detail=True, methods=['get'])
+    # def publish_check(self, request, hash=None):
+    #     """
+    #     Проверить, готова ли форма к публикации
+    #     Возвращает список требований и их статус
+    #     """
+    #     form = get_object_or_404(Form, hash=hash, deleted_at__isnull=True)
         
-        # Обновляем статус
-        form.status = new_status
-        form.updated_at = timezone.now()
+    #     # Проверяем права доступа
+    #     if form.user != request.user:
+    #         return Response({
+    #             'success': False,
+    #             'error': 'Вы не можете проверять чужие формы'
+    #         }, status=status.HTTP_403_FORBIDDEN)
         
-        # Если публикуем - записываем дату публикации
-        if new_status == 'active' and old_status != 'active':
-            if not hasattr(form, 'published_at') or form.published_at is None:
-                form.published_at = timezone.now()
+    #     requirements = []
         
-        form.save()
+    #     # 1. Проверка заголовка
+    #     requirements.append({
+    #         'requirement': 'Заголовок формы',
+    #         'status': 'success' if form.title else 'error',
+    #         'message': 'Заголовок установлен' if form.title else 'Требуется заголовок'
+    #     })
         
-        # Формируем сообщение в зависимости от перехода
-        status_messages = {
-            ('draft', 'active'): 'Форма успешно опубликована',
-            ('active', 'paused'): 'Форма приостановлена',
-            ('paused', 'active'): 'Форма возобновлена',
-            ('active', 'draft'): 'Форма снята с публикации',
-            ('any', 'archived'): 'Форма успешно архивирована',
-        }
+    #     # 2. Проверка наличия вопросов
+    #     questions_count = form.questions.count()
+    #     requirements.append({
+    #         'requirement': 'Вопросы в форме',
+    #         'status': 'success' if questions_count > 0 else 'error',
+    #         'message': f'Найдено {questions_count} вопросов' if questions_count > 0 else 'Требуется хотя бы один вопрос'
+    #     })
         
-        message = status_messages.get((old_status, new_status))
-        if not message:
-            message = f'Статус формы изменен с "{old_status}" на "{new_status}"'
+    #     # 3. Проверка обязательных вопросов (если есть)
+    #     required_questions = form.questions.filter(is_required=True)
+    #     requirements.append({
+    #         'requirement': 'Обязательные вопросы',
+    #         'status': 'success' if required_questions.exists() else 'warning',
+    #         'message': f'Найдено {required_questions.count()} обязательных вопросов' if required_questions.exists() else 'Рекомендуется добавить обязательные вопросы'
+    #     })
         
-        return Response({
-            'success': True,
-            'message': message,
-            'data': {
-                'form_hash': form.hash,
-                'form_title': form.title,
-                'old_status': old_status,
-                'new_status': new_status,
-                'updated_at': form.updated_at.isoformat(),
-                'questions_count': form.questions.count(),
-            }
-        })
+    #     # 4. Проверка различных типов вопросов
+    #     question_types = form.questions.values_list('type', flat=True).distinct()
+    #     question_types_count = len(question_types)
+    #     requirements.append({
+    #         'requirement': 'Разнообразие типов вопросов',
+    #         'status': 'success' if question_types_count > 1 else 'warning',
+    #         'message': f'Найдено {question_types_count} различных типов вопросов' if question_types_count > 1 else 'Рекомендуется добавить вопросы разных типов'
+    #     })
         
-    @action(detail=True, methods=['get'])
-    def publish_check(self, request, hash=None):
-        """
-        Проверить, готова ли форма к публикации
-        Возвращает список требований и их статус
-        """
-        form = get_object_or_404(Form, hash=hash, deleted_at__isnull=True)
+    #     # 5. Проверка описания (опционально)
+    #     requirements.append({
+    #         'requirement': 'Описание формы',
+    #         'status': 'success' if form.description else 'warning',
+    #         'message': 'Описание установлено' if form.description else 'Рекомендуется добавить описание'
+    #     })
         
-        # Проверяем права доступа
-        if form.user != request.user:
-            return Response({
-                'success': False,
-                'error': 'Вы не можете проверять чужие формы'
-            }, status=status.HTTP_403_FORBIDDEN)
+    #     # 6. Проверка текущего статуса
+    #     requirements.append({
+    #         'requirement': 'Текущий статус',
+    #         'status': 'info',
+    #         'message': f'Текущий статус: {form.get_status_display()}'
+    #     })
         
-        requirements = []
+    #     # Определяем общий статус
+    #     has_errors = any(r['status'] == 'error' for r in requirements)
+    #     has_warnings = any(r['status'] == 'warning' for r in requirements)
         
-        # 1. Проверка заголовка
-        requirements.append({
-            'requirement': 'Заголовок формы',
-            'status': 'success' if form.title else 'error',
-            'message': 'Заголовок установлен' if form.title else 'Требуется заголовок'
-        })
+    #     overall_status = 'ready'
+    #     if has_errors:
+    #         overall_status = 'not_ready'
+    #     elif has_warnings:
+    #         overall_status = 'ready_with_warnings'
         
-        # 2. Проверка наличия вопросов
-        questions_count = form.questions.count()
-        requirements.append({
-            'requirement': 'Вопросы в форме',
-            'status': 'success' if questions_count > 0 else 'error',
-            'message': f'Найдено {questions_count} вопросов' if questions_count > 0 else 'Требуется хотя бы один вопрос'
-        })
-        
-        # 3. Проверка обязательных вопросов (если есть)
-        required_questions = form.questions.filter(is_required=True)
-        requirements.append({
-            'requirement': 'Обязательные вопросы',
-            'status': 'success' if required_questions.exists() else 'warning',
-            'message': f'Найдено {required_questions.count()} обязательных вопросов' if required_questions.exists() else 'Рекомендуется добавить обязательные вопросы'
-        })
-        
-        # 4. Проверка различных типов вопросов
-        question_types = form.questions.values_list('type', flat=True).distinct()
-        question_types_count = len(question_types)
-        requirements.append({
-            'requirement': 'Разнообразие типов вопросов',
-            'status': 'success' if question_types_count > 1 else 'warning',
-            'message': f'Найдено {question_types_count} различных типов вопросов' if question_types_count > 1 else 'Рекомендуется добавить вопросы разных типов'
-        })
-        
-        # 5. Проверка описания (опционально)
-        requirements.append({
-            'requirement': 'Описание формы',
-            'status': 'success' if form.description else 'warning',
-            'message': 'Описание установлено' if form.description else 'Рекомендуется добавить описание'
-        })
-        
-        # 6. Проверка текущего статуса
-        requirements.append({
-            'requirement': 'Текущий статус',
-            'status': 'info',
-            'message': f'Текущий статус: {form.get_status_display()}'
-        })
-        
-        # Определяем общий статус
-        has_errors = any(r['status'] == 'error' for r in requirements)
-        has_warnings = any(r['status'] == 'warning' for r in requirements)
-        
-        overall_status = 'ready'
-        if has_errors:
-            overall_status = 'not_ready'
-        elif has_warnings:
-            overall_status = 'ready_with_warnings'
-        
-        return Response({
-            'success': True,
-            'form_hash': form.hash,
-            'form_title': form.title,
-            'overall_status': overall_status,
-            'can_publish': not has_errors,
-            'requirements': requirements,
-            'statistics': {
-                'questions_count': questions_count,
-                'required_questions_count': required_questions.count(),
-                'question_types_count': question_types_count,
-                'question_types': list(question_types)
-            }
-        })
+    #     return Response({
+    #         'success': True,
+    #         'form_hash': form.hash,
+    #         'form_title': form.title,
+    #         'overall_status': overall_status,
+    #         'can_publish': not has_errors,
+    #         'requirements': requirements,
+    #         'statistics': {
+    #             'questions_count': questions_count,
+    #             'required_questions_count': required_questions.count(),
+    #             'question_types_count': question_types_count,
+    #             'question_types': list(question_types)
+    #         }
+    #     })
         
     def _track_visit(self, form, request, user_profile=None):
         """Отслеживание посещения формы"""
