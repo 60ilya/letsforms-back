@@ -880,7 +880,7 @@ class FormViewSet(viewsets.ModelViewSet):
                     'questions_deleted': deleted_count,
                     'questions_added': len(created_questions),
                     'questions': question_serializer.data
-                }, status=status.HTTP_200_CREATED)
+                }, status=status.HTTP_201_CREATED)
                 
         except Exception as e:
             return Response({
