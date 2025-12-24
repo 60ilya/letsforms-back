@@ -103,125 +103,110 @@ class FormViewSet(viewsets.ModelViewSet):
         instance.deleted_at = timezone.now()
         instance.save()
         
-    @action(detail=True, methods=['post'])
-    def publish(self, request, hash=None):
+    @action(detail=True, methods=['post'], url_path='change_status')
+    def change_status(self, request, pk=None):
         """
-        Опубликовать форму (изменить статус на 'active')
+        Изменить статус формы
         Доступно только владельцу формы
+        Поддерживаемые статусы: draft, active, paused, archived
         """
-        form = get_object_or_404(Form, hash=hash, deleted_at__isnull=True)
+        form = get_object_or_404(Form, hash=pk, deleted_at__isnull=True)
         
         # Проверяем права доступа
         if form.user != request.user:
             return Response({
                 'success': False,
-                'error': 'Вы не можете публиковать чужие формы'
+                'error': 'У вас нет прав для изменения статуса этой формы'
             }, status=status.HTTP_403_FORBIDDEN)
         
-        # Проверяем, можно ли опубликовать форму
-        if form.status == 'active':
+        # Получаем новый статус из запроса
+        new_status = request.data.get('status')
+        
+        if not new_status:
             return Response({
                 'success': False,
-                'error': 'Форма уже опубликована'
+                'error': 'Поле "status" обязательно для заполнения'
             }, status=status.HTTP_400_BAD_REQUEST)
         
-        # Проверяем, есть ли вопросы в форме
-        if not form.questions.exists():
+        # Валидация статуса
+        valid_statuses = ['draft', 'active', 'paused', 'archived']
+        if new_status not in valid_statuses:
             return Response({
                 'success': False,
-                'error': 'Нельзя опубликовать форму без вопросов'
+                'error': f'Недопустимый статус. Допустимые значения: {", ".join(valid_statuses)}'
             }, status=status.HTTP_400_BAD_REQUEST)
         
-        # Проверяем, что все обязательные поля заполнены
-        if not form.title:
+        # Проверяем переходы статусов
+        current_status = form.status
+        
+        # Если статус не меняется
+        if new_status == current_status:
             return Response({
                 'success': False,
-                'error': 'У формы должен быть заголовок'
+                'error': f'Форма уже имеет статус "{current_status}"'
             }, status=status.HTTP_400_BAD_REQUEST)
         
-        # Меняем статус на активный
-        form.status = 'active'
-        form.updated_at = timezone.now()
-        form.save()
+        # Дополнительные проверки для публикации (active)
+        if new_status == 'active':
+            # Проверяем, есть ли вопросы в форме
+            if not form.questions.exists():
+                return Response({
+                    'success': False,
+                    'error': 'Нельзя опубликовать форму без вопросов'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Проверяем, что у формы есть заголовок
+            if not form.title:
+                return Response({
+                    'success': False,
+                    'error': 'У формы должен быть заголовок'
+                }, status=status.HTTP_400_BAD_REQUEST)
         
-        return Response({
-            'success': True,
-            'message': 'Форма успешно опубликована',
-            'form_hash': form.hash,
-            'form_title': form.title,
-            'status': form.status,
-            'questions_count': form.questions.count(),
-            'published_at': timezone.now().isoformat()
-        })
-
-    @action(detail=True, methods=['post'])
-    def unpublish(self, request, hash=None):
-        """
-        Снять форму с публикации (изменить статус на 'draft' или 'paused')
-        Доступно только владельцу формы
-        """
-        form = get_object_or_404(Form, hash=hash, deleted_at__isnull=True)
-        
-        # Проверяем права доступа
-        if form.user != request.user:
+        # Проверка на переход из archived (если нужно ограничить)
+        if current_status == 'archived' and new_status != 'archived':
             return Response({
                 'success': False,
-                'error': 'Вы не можете снимать с публикации чужие формы'
-            }, status=status.HTTP_403_FORBIDDEN)
-        
-        # Проверяем, можно ли снять с публикации
-        if form.status != 'active':
-            return Response({
-                'success': False,
-                'error': f'Форма не опубликована (текущий статус: {form.status})'
+                'error': 'Нельзя изменить статус архивированной формы'
             }, status=status.HTTP_400_BAD_REQUEST)
         
-        # Меняем статус на черновик или приостанавливаем
-        new_status = request.data.get('status', 'draft')
+        # Сохраняем старый статус для логов
+        old_status = form.status
         
-        if new_status not in ['draft', 'paused']:
-            new_status = 'draft'
-        
+        # Обновляем статус
         form.status = new_status
         form.updated_at = timezone.now()
+        
+        # Если публикуем - записываем дату публикации
+        if new_status == 'active' and old_status != 'active':
+            if not hasattr(form, 'published_at') or form.published_at is None:
+                form.published_at = timezone.now()
+        
         form.save()
+        
+        # Формируем сообщение в зависимости от перехода
+        status_messages = {
+            ('draft', 'active'): 'Форма успешно опубликована',
+            ('active', 'paused'): 'Форма приостановлена',
+            ('paused', 'active'): 'Форма возобновлена',
+            ('active', 'draft'): 'Форма снята с публикации',
+            ('any', 'archived'): 'Форма успешно архивирована',
+        }
+        
+        message = status_messages.get((old_status, new_status))
+        if not message:
+            message = f'Статус формы изменен с "{old_status}" на "{new_status}"'
         
         return Response({
             'success': True,
-            'message': f'Форма снята с публикации (новый статус: {new_status})',
-            'form_hash': form.hash,
-            'form_title': form.title,
-            'status': form.status,
-            'unpublished_at': timezone.now().isoformat()
-        })
-
-    @action(detail=True, methods=['post'])
-    def archive(self, request, hash=None):
-        """
-        Архивировать форму
-        Доступно только владельцу формы
-        """
-        form = get_object_or_404(Form, hash=hash, deleted_at__isnull=True)
-        
-        # Проверяем права доступа
-        if form.user != request.user:
-            return Response({
-                'success': False,
-                'error': 'Вы не можете архивировать чужие формы'
-            }, status=status.HTTP_403_FORBIDDEN)
-        
-        # Меняем статус на архивный
-        form.status = 'archived'
-        form.updated_at = timezone.now()
-        form.save()
-        
-        return Response({
-            'success': True,
-            'message': 'Форма успешно архивирована',
-            'form_hash': form.hash,
-            'form_title': form.title,
-            'status': form.status,
-            'archived_at': timezone.now().isoformat()
+            'message': message,
+            'data': {
+                'form_hash': form.hash,
+                'form_title': form.title,
+                'old_status': old_status,
+                'new_status': new_status,
+                'updated_at': form.updated_at.isoformat(),
+                'questions_count': form.questions.count(),
+            }
         })
         
     @action(detail=True, methods=['get'])

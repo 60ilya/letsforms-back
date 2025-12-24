@@ -248,15 +248,13 @@ class Question(models.Model):
     QUESTION_TYPES = [
         ('info', 'Информационный блок'),
         ('text', 'Текстовый ответ'),
-        ('text_area', 'Текстовый ответ'),
+        ('text_area', 'Большой текстовый ответ'),
         ('number', 'Числовой ответ'),
         ('scale', 'Числовой ответ от 1 до 10'),
         ('date', 'Дата'),
         ('single_choice', 'Один вариант'),
         ('multiple_choice', 'Несколько вариантов'),
         ('select', 'Выпадающий список (один вариант)'),
-        ('text_area', 'Большой текстовый ответ'),
-
     ]
 
     form = models.ForeignKey(Form, on_delete=models.CASCADE, related_name='questions')
