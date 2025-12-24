@@ -220,9 +220,15 @@ CSRF_TRUSTED_ORIGINS = [
 
 SWAGGER_SETTINGS = {
     'SECURITY_DEFINITIONS': {
-        'Basic': {
-            'type': 'basic'
+        'Bearer': {
+            'type': 'apiKey',
+            'name': 'Authorization',
+            'in': 'header',
+            'description': 'JWT Authorization header using the Bearer scheme. Example: "Authorization: Bearer {token}"'
         }
     },
-    'USE_SESSION_AUTH': True,
+    'USE_SESSION_AUTH': False,  # Отключаем сессии для API
+    'JSON_EDITOR': True,
+    'SUPPORTED_SUBMIT_METHODS': ['get', 'post', 'put', 'delete'],
+    'VALIDATOR_URL': None,  # Отключаем валидатор Swagger
 }
