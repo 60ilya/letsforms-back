@@ -103,21 +103,21 @@ class FormViewSet(viewsets.ModelViewSet):
         instance.deleted_at = timezone.now()
         instance.save()
         
-    @action(detail=True, methods=['post'], url_path='change_status')
-    def change_status(self, request, pk=None):
+    @action(detail=True, methods=['post'])
+    def change_status(self, request, hash=None):
         """
         Изменить статус формы
-        pk здесь - это hash формы, потому что мы используем его в lookup_field
+        Поддерживаемые статусы: draft, active, paused, archived
         """
         try:
-            # Получаем форму по hash (pk - это hash в нашем случае)
-            form = get_object_or_404(Form, hash=pk, deleted_at__isnull=True)
+            # Получаем форму по hash
+            form = get_object_or_404(Form, hash=hash, deleted_at__isnull=True)
             
             # Проверяем права доступа
             if form.user != request.user:
                 return Response({
                     'success': False,
-                    'error': 'У вас нет прав для изменения статуса этой формы'
+                    'error': 'Вы не можете изменять статус чужой формы'
                 }, status=status.HTTP_403_FORBIDDEN)
             
             # Получаем новый статус из запроса
@@ -137,7 +137,6 @@ class FormViewSet(viewsets.ModelViewSet):
                     'error': f'Недопустимый статус. Допустимые значения: {", ".join(valid_statuses)}'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Проверяем переходы статусов
             current_status = form.status
             
             # Если статус не меняется
@@ -147,8 +146,17 @@ class FormViewSet(viewsets.ModelViewSet):
                     'error': f'Форма уже имеет статус "{current_status}"'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
-            # Дополнительные проверки для публикации (active)
+            # ОСНОВНАЯ ЛОГИКА - копируем проверки из старых методов
+            
+            # Проверки для публикации (active)
             if new_status == 'active':
+                # Проверяем, можно ли опубликовать форму
+                if current_status == 'active':
+                    return Response({
+                        'success': False,
+                        'error': 'Форма уже опубликована'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                
                 # Проверяем, есть ли вопросы в форме
                 if not form.questions.exists():
                     return Response({
@@ -156,12 +164,26 @@ class FormViewSet(viewsets.ModelViewSet):
                         'error': 'Нельзя опубликовать форму без вопросов'
                     }, status=status.HTTP_400_BAD_REQUEST)
                 
-                # Проверяем, что у формы есть заголовок
+                # Проверяем, что все обязательные поля заполнены
                 if not form.title:
                     return Response({
                         'success': False,
                         'error': 'У формы должен быть заголовок'
                     }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Проверки для снятия с публикации (draft или paused)
+            elif new_status in ['draft', 'paused'] and current_status == 'active':
+                # Проверяем, можно ли снять с публикации
+                if current_status != 'active':
+                    return Response({
+                        'success': False,
+                        'error': f'Форма не опубликована (текущий статус: {current_status})'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Проверка для архивации
+            elif new_status == 'archived':
+                pass
+                # Дополнительных проверок нет, можно архивировать из любого статуса
             
             # Сохраняем старый статус для логов
             old_status = form.status
@@ -180,9 +202,10 @@ class FormViewSet(viewsets.ModelViewSet):
             # Формируем сообщение в зависимости от перехода
             status_messages = {
                 ('draft', 'active'): 'Форма успешно опубликована',
+                ('active', 'draft'): 'Форма снята с публикации (черновик)',
                 ('active', 'paused'): 'Форма приостановлена',
                 ('paused', 'active'): 'Форма возобновлена',
-                ('active', 'draft'): 'Форма снята с публикации',
+                ('paused', 'draft'): 'Форма снята с публикации (черновик)',
                 ('any', 'archived'): 'Форма успешно архивирована',
             }
             
@@ -190,24 +213,33 @@ class FormViewSet(viewsets.ModelViewSet):
             if not message:
                 message = f'Статус формы изменен с "{old_status}" на "{new_status}"'
             
-            return Response({
+            # Формируем ответ
+            response_data = {
                 'success': True,
                 'message': message,
-                'data': {
-                    'form_hash': form.hash,
-                    'form_title': form.title,
-                    'old_status': old_status,
-                    'new_status': new_status,
-                    'updated_at': form.updated_at.isoformat(),
-                    'questions_count': form.questions.count(),
-                }
-            })
+                'form_hash': form.hash,
+                'form_title': form.title,
+                'old_status': old_status,
+                'new_status': new_status,
+                'questions_count': form.questions.count(),
+                'updated_at': form.updated_at.isoformat(),
+            }
+            
+            # Добавляем временные метки в зависимости от действия
+            if new_status == 'active':
+                response_data['published_at'] = form.published_at.isoformat() if form.published_at else timezone.now().isoformat()
+            elif new_status in ['draft', 'paused']:
+                response_data['unpublished_at'] = timezone.now().isoformat()
+            elif new_status == 'archived':
+                response_data['archived_at'] = timezone.now().isoformat()
+            
+            return Response(response_data)
             
         except Exception as e:
             # logger.error(f"Error changing form status: {e}", exc_info=True)
             return Response({
                 'success': False,
-                'error': 'Внутренняя ошибка сервера'
+                'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
     # @action(detail=True, methods=['get'])
