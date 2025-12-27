@@ -126,26 +126,45 @@ class UserFormsStatisticsSerializer(serializers.Serializer):
         ]
 
 class ResponseSerializer(serializers.ModelSerializer):
+    # 1. tg_id пользователя
     tg_id = serializers.SerializerMethodField()
+    
+    # 2. username пользователя
     username = serializers.SerializerMethodField()
-    form_hash = serializers.CharField(source='form.hash', read_only=True)  # Используем hash вместо form_id
+    
+    # 3. Текстовый вопрос
+    question_text = serializers.CharField(source='question.text', read_only=True)
+    
+    # 4. Тип вопроса
+    question_type = serializers.CharField(source='question.type', read_only=True)
+    
+    # 5. Порядковый номер в форме
+    question_order = serializers.IntegerField(source='question.order', read_only=True)
+    
+    # 6. Ответ пользователя (как есть, без форматирования)
+    answer = serializers.JSONField()
     
     class Meta:
         model = FormResponse
-        fields = ['form_hash', 'tg_id', 'username', 'question', 'text', 'answer', 'order', 'created_at']
-        read_only_fields = ['form_hash', 'created_at']
-        extra_kwargs = {
-            'form': {'write_only': True}  # form только для записи
-        }
+        fields = [
+            'tg_id',           # Telegram ID пользователя
+            'username',        # Username пользователя
+            'question_text',   # Текст вопроса
+            'question_type',   # Тип вопроса (text, number, scale и т.д.)
+            'question_order',  # Порядок вопроса в форме
+            'answer',          # Ответ пользователя
+            'created_at',      # Дата создания ответа
+        ]
+        read_only_fields = fields
     
     def get_tg_id(self, obj):
-        """Получаем Telegram ID из профиля пользователя"""
-        if obj.user_profile and obj.user_profile.telegram_id:
+        """Получаем Telegram ID пользователя"""
+        if obj.user_profile and hasattr(obj.user_profile, 'telegram_id'):
             return obj.user_profile.telegram_id
         return None
     
     def get_username(self, obj):
-        """Получаем username из пользователя"""
+        """Получаем username пользователя"""
         if obj.user_profile and obj.user_profile.user:
             return obj.user_profile.user.username
         return None
