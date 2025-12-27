@@ -132,8 +132,8 @@ class ResponseSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = FormResponse
-        fields = ['id', 'form_hash', 'user_profile', 'tg_id', 'username', 'question', 'answer', 'created_at']
-        read_only_fields = ['id', 'form_hash', 'created_at']
+        fields = ['form_hash', 'tg_id', 'question', 'text', 'answer', 'order', 'created_at']
+        read_only_fields = ['form_hash', 'created_at']
         extra_kwargs = {
             'form': {'write_only': True}  # form только для записи
         }
