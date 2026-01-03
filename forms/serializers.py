@@ -18,10 +18,11 @@ class UserProfileSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 class FormSerializer(serializers.ModelSerializer):
-    user_username = serializers.CharField(source='user.username', read_only=True)
+    user_username = serializers.CharField(source='user_profile.user.username', read_only=True)
     tg_id = serializers.IntegerField(write_only=True, required=True)
     hash = serializers.CharField(read_only=True)
     
+    # Статистика
     visit_count = serializers.IntegerField(read_only=True)
     response_count = serializers.IntegerField(read_only=True)
     conversion_rate = serializers.FloatField(read_only=True)
@@ -31,7 +32,7 @@ class FormSerializer(serializers.ModelSerializer):
         model = Form
         fields = [
             'hash', 'user_username', 'tg_id', 'title', 'description', 'type', 'status',
-            'visit_count', 'response_count', 'conversion_rate', 'bounce_rate',
+            'visit_count', 'response_count', 'conversion_rate', 'bounce_rate', 'allow_multiple_responses',
             'created_at', 'updated_at', 'deleted_at'
         ]
         read_only_fields = [
@@ -53,7 +54,7 @@ class FormSerializer(serializers.ModelSerializer):
         
         try:
             user_profile = UserProfile.objects.get(telegram_id=tg_id, deleted_at__isnull=True)
-            validated_data['user'] = user_profile.user
+            validated_data['user_profile'] = user_profile  # Теперь сохраняем user_profile
         except UserProfile.DoesNotExist:
             raise serializers.ValidationError(f"Пользователь с Telegram ID {tg_id} не найден")
         
@@ -68,7 +69,8 @@ class FormSerializer(serializers.ModelSerializer):
         except UserProfile.DoesNotExist:
             raise serializers.ValidationError(f"Пользователь с Telegram ID {tg_id} не найден")
         
-        if instance.user != user_profile.user:
+        # Проверяем права через user_profile
+        if instance.user_profile != user_profile:
             raise serializers.ValidationError("Вы не можете редактировать чужие формы")
         
         return super().update(instance, validated_data)

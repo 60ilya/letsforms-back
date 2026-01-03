@@ -28,20 +28,34 @@ class UserProfileViewSet(viewsets.ModelViewSet):
 
 class FormViewSet(viewsets.ModelViewSet):
     serializer_class = FormSerializer
-    permission_classes = [AllowAny]
-    lookup_field = 'hash'  # Используем hash вместо id
-    lookup_url_kwarg = 'hash'  # В URL будет hash вместо pk
+    permission_classes = [IsAuthenticated]
+    lookup_field = 'hash'
 
     def get_queryset(self):
-        if getattr(self, 'swagger_fake_view', False):
+        """Возвращаем формы текущего пользователя"""
+        try:
+            # Получаем UserProfile текущего пользователя
+            user_profile = UserProfile.objects.get(user=self.request.user, deleted_at__isnull=True)
+            return Form.objects.filter(
+                user_profile=user_profile,
+                deleted_at__isnull=True
+            ).prefetch_related('questions')
+        except UserProfile.DoesNotExist:
+            # Если у пользователя нет профиля, возвращаем пустой queryset
             return Form.objects.none()
         
-        # Для аутентифицированных пользователей - их формы
-        if self.request.user.is_authenticated:
-            return Form.objects.filter(deleted_at__isnull=True, user=self.request.user)
+    def perform_create(self, serializer):
+        """При создании формы привязываем к текущему пользователю"""
+        try:
+            user_profile = UserProfile.objects.get(user=self.request.user, deleted_at__isnull=True)
+            # Передаем tg_id в сериализатор для валидации
+            serializer.validated_data['tg_id'] = user_profile.telegram_id
+        except UserProfile.DoesNotExist:
+            raise serializers.ValidationError({
+                'tg_id': 'У вас нет профиля с Telegram ID'
+            })
         
-        # Для неаутентифицированных - пустой queryset
-        return Form.objects.none()
+        serializer.save()
 
     def get_serializer_class(self):
         if self.action == 'retrieve':
@@ -242,94 +256,6 @@ class FormViewSet(viewsets.ModelViewSet):
                 'error': str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         
-    # @action(detail=True, methods=['get'])
-    # def publish_check(self, request, hash=None):
-    #     """
-    #     Проверить, готова ли форма к публикации
-    #     Возвращает список требований и их статус
-    #     """
-    #     form = get_object_or_404(Form, hash=hash, deleted_at__isnull=True)
-        
-    #     # Проверяем права доступа
-    #     if form.user != request.user:
-    #         return Response({
-    #             'success': False,
-    #             'error': 'Вы не можете проверять чужие формы'
-    #         }, status=status.HTTP_403_FORBIDDEN)
-        
-    #     requirements = []
-        
-    #     # 1. Проверка заголовка
-    #     requirements.append({
-    #         'requirement': 'Заголовок формы',
-    #         'status': 'success' if form.title else 'error',
-    #         'message': 'Заголовок установлен' if form.title else 'Требуется заголовок'
-    #     })
-        
-    #     # 2. Проверка наличия вопросов
-    #     questions_count = form.questions.count()
-    #     requirements.append({
-    #         'requirement': 'Вопросы в форме',
-    #         'status': 'success' if questions_count > 0 else 'error',
-    #         'message': f'Найдено {questions_count} вопросов' if questions_count > 0 else 'Требуется хотя бы один вопрос'
-    #     })
-        
-    #     # 3. Проверка обязательных вопросов (если есть)
-    #     required_questions = form.questions.filter(is_required=True)
-    #     requirements.append({
-    #         'requirement': 'Обязательные вопросы',
-    #         'status': 'success' if required_questions.exists() else 'warning',
-    #         'message': f'Найдено {required_questions.count()} обязательных вопросов' if required_questions.exists() else 'Рекомендуется добавить обязательные вопросы'
-    #     })
-        
-    #     # 4. Проверка различных типов вопросов
-    #     question_types = form.questions.values_list('type', flat=True).distinct()
-    #     question_types_count = len(question_types)
-    #     requirements.append({
-    #         'requirement': 'Разнообразие типов вопросов',
-    #         'status': 'success' if question_types_count > 1 else 'warning',
-    #         'message': f'Найдено {question_types_count} различных типов вопросов' if question_types_count > 1 else 'Рекомендуется добавить вопросы разных типов'
-    #     })
-        
-    #     # 5. Проверка описания (опционально)
-    #     requirements.append({
-    #         'requirement': 'Описание формы',
-    #         'status': 'success' if form.description else 'warning',
-    #         'message': 'Описание установлено' if form.description else 'Рекомендуется добавить описание'
-    #     })
-        
-    #     # 6. Проверка текущего статуса
-    #     requirements.append({
-    #         'requirement': 'Текущий статус',
-    #         'status': 'info',
-    #         'message': f'Текущий статус: {form.get_status_display()}'
-    #     })
-        
-    #     # Определяем общий статус
-    #     has_errors = any(r['status'] == 'error' for r in requirements)
-    #     has_warnings = any(r['status'] == 'warning' for r in requirements)
-        
-    #     overall_status = 'ready'
-    #     if has_errors:
-    #         overall_status = 'not_ready'
-    #     elif has_warnings:
-    #         overall_status = 'ready_with_warnings'
-        
-    #     return Response({
-    #         'success': True,
-    #         'form_hash': form.hash,
-    #         'form_title': form.title,
-    #         'overall_status': overall_status,
-    #         'can_publish': not has_errors,
-    #         'requirements': requirements,
-    #         'statistics': {
-    #             'questions_count': questions_count,
-    #             'required_questions_count': required_questions.count(),
-    #             'question_types_count': question_types_count,
-    #             'question_types': list(question_types)
-    #         }
-    #     })
-        
     def _track_visit(self, form, request, user_profile=None):
         """Отслеживание посещения формы"""
         try:
@@ -439,8 +365,16 @@ class FormViewSet(viewsets.ModelViewSet):
         """Получение всех ответов на форму (только для владельца)"""
         form = get_object_or_404(Form, hash=hash, deleted_at__isnull=True)
         
+        # Получаем user_profile текущего пользователя (если есть)
+        current_user_profile = None
+        if request.user.is_authenticated:
+            try:
+                current_user_profile = UserProfile.objects.get(user=request.user, deleted_at__isnull=True)
+            except UserProfile.DoesNotExist:
+                pass
+        
         # Если пользователь аутентифицирован и это его форма
-        if request.user.is_authenticated and form.user == request.user:
+        if current_user_profile and form.user_profile == current_user_profile:
             responses = form.responses.all()
             serializer = ResponseSerializer(responses, many=True)
             return Response({
@@ -465,8 +399,8 @@ class FormViewSet(viewsets.ModelViewSet):
                 deleted_at__isnull=True
             )
             
-            # Проверяем, что форма принадлежит этому пользователю
-            if form.user != user_profile.user:
+            # Проверяем, что форма принадлежит этому пользователю (через user_profile)
+            if form.user_profile != user_profile:
                 return Response({
                     'success': False,
                     'error': 'Вы не можете просматривать ответы на чужие формы'
@@ -478,9 +412,9 @@ class FormViewSet(viewsets.ModelViewSet):
             return Response({
                 'success': True,
                 'tg_id': tg_id,
-                'user_id': user_profile.user.id,
-                'username': user_profile.user.username,
+                'telegram_username': user_profile.telegram_username,
                 'form_hash': form.hash,
+                'form_title': form.title,
                 'count': responses.count(),
                 'responses': serializer.data
             })

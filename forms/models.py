@@ -143,6 +143,7 @@ class UserProfile(models.Model):
             self.user.last_name = self.telegram_last_name
         self.user.save()
 
+# forms/models.py
 class Form(models.Model):
     FORM_TYPES = [
         ('survey', 'Опрос'),
@@ -158,12 +159,20 @@ class Form(models.Model):
         ('archived', 'В архиве'),
     ]
 
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='forms')
+    # ИЗМЕНЕНИЕ: теперь связываем с UserProfile вместо User
+    user_profile = models.ForeignKey(
+        UserProfile, 
+        on_delete=models.CASCADE, 
+        related_name='forms',
+        verbose_name="Владелец формы"
+    )
+    
     title = models.CharField(max_length=255)
     description = models.TextField(blank=True, null=True)
     type = models.CharField(max_length=20, choices=FORM_TYPES, default='survey')
     hash = models.CharField(max_length=8, unique=True, editable=False, blank=True)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft')
+    allow_multiple_responses = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     deleted_at = models.DateTimeField(null=True, blank=True)
@@ -187,8 +196,17 @@ class Form(models.Model):
         
     def generate_unique_hash(self):
         """Генерирует уникальный 8-значный хеш"""
-
         return get_random_string(8, allowed_chars='abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
+    
+    @property
+    def user(self):
+        """Свойство для обратной совместимости - возвращает Django User"""
+        return self.user_profile.user if self.user_profile else None
+    
+    @property
+    def telegram_id(self):
+        """Telegram ID владельца формы"""
+        return self.user_profile.telegram_id if self.user_profile else None
     
     @property
     def visit_count(self):
@@ -221,8 +239,56 @@ class Form(models.Model):
     def public_url(self):
         """Возвращает публичную URL форму"""
         from django.urls import reverse
-        # Или ваш домен
         return f"/forms/{self.hash}/"
+    
+    def can_user_submit(self, user_profile):
+        """
+        Проверяет, может ли пользователь отправить форму
+        """
+        # Если форма не активна
+        if self.status != 'active':
+            return False, "Форма неактивна"
+        
+        # Если разрешены множественные ответы - всегда можно
+        if self.allow_multiple_responses:
+            return True, None
+        
+        # Если только один ответ - проверяем, есть ли уже ответы
+        if user_profile:
+            has_previous = self.responses.filter(user_profile=user_profile).exists()
+            if has_previous:
+                return False, "Вы уже отвечали на эту форму"
+        
+        return True, None
+    
+    def get_submission_status_for_user(self, user_profile):
+        """
+        Возвращает статус отправки для пользователя
+        """
+        if not user_profile:
+            return {
+                'can_submit': True,
+                'message': 'Анонимный пользователь',
+                'has_responded': False
+            }
+        
+        has_responded = self.responses.filter(user_profile=user_profile).exists()
+        
+        if self.allow_multiple_responses:
+            return {
+                'can_submit': True,
+                'message': 'Можно отвечать многократно',
+                'has_responded': has_responded,
+                'response_count': self.responses.filter(user_profile=user_profile).count()
+            }
+        else:
+            can_submit = not has_responded
+            return {
+                'can_submit': can_submit,
+                'message': 'Можно ответить только один раз' if can_submit else 'Вы уже отвечали',
+                'has_responded': has_responded,
+                'response_count': 1 if has_responded else 0
+            }
     
 class FormVisit(models.Model):
     """Модель для отслеживания посещений форм"""
