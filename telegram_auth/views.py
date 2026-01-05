@@ -30,11 +30,8 @@ class UniversalAuthAPIView(APIView):
     def get(self, request):
         """
         Обработка GET запроса от Telegram Widget
-        Параметры: /api/auth/?id=123&first_name=Имя&username=user
         """
-        logger.info("🔐 GET АВТОРИЗАЦИЯ (Telegram Widget)")
-        
-        # Конвертируем GET параметры в формат для обработки
+        # Конвертируем GET параметры
         data = {
             'id': request.GET.get('id'),
             'first_name': request.GET.get('first_name', ''),
@@ -45,8 +42,9 @@ class UniversalAuthAPIView(APIView):
             'hash': request.GET.get('hash', ''),
         }
         
-        # Используем существующую логику
-        return self._process_auth(data)
+        # Просто вызываем POST логику с этими данными
+        request._full_data = data
+        return self.post(request)
     
     def post(self, request):
         """
