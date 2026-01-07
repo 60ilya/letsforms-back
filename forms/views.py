@@ -437,6 +437,7 @@ class FormViewSet(viewsets.ModelViewSet):
             }, status=status.HTTP_400_BAD_REQUEST)
         
         try:
+            tg_id = int(tg_id)
             profile = UserProfile.objects.get(telegram_id=tg_id, deleted_at__isnull=True)
             user = profile.user
             forms = Form.objects.filter(user=user, deleted_at__isnull=True)
