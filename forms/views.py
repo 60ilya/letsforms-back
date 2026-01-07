@@ -428,30 +428,40 @@ class FormViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], permission_classes=[AllowAny])
     def by_tg_id(self, request):
         """Получить формы пользователя по Telegram ID со статистикой"""
-        tg_id = request.query_params.get('tg_id')
+        tg_id_str = request.query_params.get('tg_id')
         
-        if not tg_id:
+        if not tg_id_str:
             return Response({
                 'success': False,
                 'error': 'tg_id обязателен'
             }, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            tg_id = int(tg_id)
+            # Преобразуем в число
+            try:
+                tg_id = int(tg_id_str)
+            except ValueError:
+                return Response({
+                    'success': False,
+                    'error': 'tg_id должен быть числом'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Ищем профиль
             profile = UserProfile.objects.get(telegram_id=tg_id, deleted_at__isnull=True)
-            user = profile.user
-            forms = Form.objects.filter(user=user, deleted_at__isnull=True)
+            
+            # ИСПРАВЛЕНО: используем user_profile вместо user
+            forms = Form.objects.filter(user_profile=profile, deleted_at__isnull=True)
             
             # Трекаем посещения для всех форм пользователя
             for form in forms:
                 self._track_visit(form, request, profile)
             
-            # Получаем общую статистику по всем формам пользователя
+            # Получаем общую статистику
             total_forms = forms.count()
             total_visits = FormVisit.objects.filter(form__in=forms).count()
             total_responses = FormResponse.objects.filter(form__in=forms).count()
             
-            # Расчет общей конверсии и отказов
+            # Расчет общей конверсии
             overall_conversion_rate = 0
             if total_visits > 0:
                 overall_conversion_rate = round((total_responses / total_visits) * 100, 2)
@@ -469,12 +479,32 @@ class FormViewSet(viewsets.ModelViewSet):
             active_forms_count = forms.filter(status='active').count()
             draft_forms_count = forms.filter(status='draft').count()
             
-            # Используем пагинацию для форм
+            # Если нет форм, возвращаем пустой список
+            if not forms.exists():
+                return Response({
+                    'success': True,
+                    'message': 'У пользователя нет форм',
+                    'user_statistics': {
+                        'total_forms': 0,
+                        'total_visits': 0,
+                        'total_responses': 0,
+                        'overall_conversion_rate': 0,
+                        'overall_bounce_rate': 0,
+                        'active_forms_count': 0,
+                        'draft_forms_count': 0,
+                        'user_id': profile.user.id,  # берем из профиля
+                        'username': profile.user.username,
+                        'telegram_id': tg_id
+                    },
+                    'forms': [],
+                    'count': 0
+                })
+            
+            # Используем пагинацию
             page = self.paginate_queryset(forms)
             if page is not None:
                 serializer = FormSerializer(page, many=True, context={'request': request})
                 response_data = self.get_paginated_response(serializer.data)
-                # Добавляем общую статистику в ответ
                 response_data.data['user_statistics'] = {
                     'total_forms': total_forms,
                     'total_visits': total_visits,
@@ -483,8 +513,8 @@ class FormViewSet(viewsets.ModelViewSet):
                     'overall_bounce_rate': overall_bounce_rate,
                     'active_forms_count': active_forms_count,
                     'draft_forms_count': draft_forms_count,
-                    'user_id': user.id,
-                    'username': user.username,
+                    'user_id': profile.user.id,  # берем из профиля
+                    'username': profile.user.username,
                     'telegram_id': tg_id
                 }
                 return response_data
@@ -501,8 +531,8 @@ class FormViewSet(viewsets.ModelViewSet):
                     'overall_bounce_rate': overall_bounce_rate,
                     'active_forms_count': active_forms_count,
                     'draft_forms_count': draft_forms_count,
-                    'user_id': user.id,
-                    'username': user.username,
+                    'user_id': profile.user.id,  # берем из профиля
+                    'username': profile.user.username,
                     'telegram_id': tg_id
                 },
                 'forms': serializer.data,
@@ -512,13 +542,18 @@ class FormViewSet(viewsets.ModelViewSet):
         except UserProfile.DoesNotExist:
             return Response({
                 'success': False,
-                'error': f'Пользователь с Telegram ID {tg_id} не найден'
+                'error': f'Пользователь с Telegram ID {tg_id_str} не найден'
             }, status=status.HTTP_404_NOT_FOUND)
         except Exception as e:
+            import traceback
+            print(f"Error in by_tg_id: {str(e)}")
+            traceback.print_exc()
+            
             return Response({
                 'success': False,
-                'error': str(e)
-            }, status=status.HTTP_400_BAD_REQUEST)
+                'error': 'Внутренняя ошибка сервера',
+                'detail': str(e) if settings.DEBUG else None
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=False, methods=['get'], permission_classes=[AllowAny], url_path='hash/(?P<hash>[^/.]+)')
     def by_hash(self, request, hash=None):
