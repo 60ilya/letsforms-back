@@ -551,8 +551,7 @@ class FormViewSet(viewsets.ModelViewSet):
             
             return Response({
                 'success': False,
-                'error': 'Внутренняя ошибка сервера',
-                'detail': str(e) if settings.DEBUG else None
+                'error': 'Внутренняя ошибка сервера'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=False, methods=['get'], permission_classes=[AllowAny], url_path='hash/(?P<hash>[^/.]+)')
