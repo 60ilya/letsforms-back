@@ -13,4 +13,4 @@ class Migration(migrations.Migration):
         migrations.DeleteModel(
             name='TelegramUserProfile',
         ),
-    ]
+    ] 

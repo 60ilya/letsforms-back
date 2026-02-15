@@ -7,7 +7,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('forms', '0003_alter_userprofile_options_and_more'),
-    ]
+    ] 
 
     operations = [
         migrations.AddField(

@@ -11,7 +11,7 @@ class Migration(migrations.Migration):
     dependencies = [
         ('forms', '0002_formvisit'),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
-    ]
+    ] 
 
     operations = [
         migrations.AlterModelOptions(
